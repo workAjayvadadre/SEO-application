@@ -715,3 +715,5 @@ a.stat { text-decoration: none; display: grid; }
 .ai-answer { border-left: 3px solid var(--accent); }
 .oq-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 8px; }
 .error-text { color: var(--danger, #c0392b); }
+.rq-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); }

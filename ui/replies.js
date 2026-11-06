@@ -55,14 +55,58 @@ async function api(path, method = "GET", body = undefined) {
   return data;
 }
 
+const YOUTUBE_RESULT = {
+  connected: ["YouTube account connected. Approved YouTube replies can now be posted from here.", false],
+  cancelled: ["YouTube sign-in was cancelled.", true],
+  failed: ["Google refused the YouTube sign-in. Try again, or check the OAuth client in Google Cloud Console.", true],
+  expired: ["That YouTube sign-in link expired. Click Connect YouTube account again.", true],
+  "no-client": ["Set YOUTUBE_OAUTH_CLIENT_ID and YOUTUBE_OAUTH_CLIENT_SECRET in .env (and restart) first.", true],
+  "bad-redirect": ["YOUTUBE_OAUTH_REDIRECT_URL must be this app's /api/youtube/callback address (or a localhost address).", true],
+  "port-busy": ["The sign-in callback port is in use by another app (e.g. the marketing app). Stop it and try again.", true],
+};
+
+/** After Google sends the browser back (/?youtube=...#replies): show the outcome once, then tidy the URL. */
+function youtubeResultFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const result = params.get("youtube");
+  if (!result) return null;
+  history.replaceState(null, "", `${location.pathname}${location.hash || "#replies"}`);
+  return YOUTUBE_RESULT[result] || null;
+}
+
 async function load() {
+  const ytResult = youtubeResultFromUrl();
   try {
-    st.data = await api("/api/replies");
-    note("");
+    const [data, youtube] = await Promise.all([api("/api/replies"), api("/api/youtube/account").catch(() => null)]);
+    st.data = data;
+    st.youtube = youtube;
+    note(ytResult ? ytResult[0] : "", ytResult ? ytResult[1] : false);
     render();
   } catch (err) {
     note(`Couldn't load the reply queue: ${err.message}`, true);
   }
+}
+
+function youtubeRow() {
+  const yt = st.youtube;
+  if (!yt) return null;
+  let body;
+  if (yt.connected) {
+    const who = yt.email ? `Connected: ${yt.email}` : "Connected";
+    const since = yt.connected_at ? ` · since ${String(yt.connected_at).slice(0, 10)}` : "";
+    const disconnect = yt.source === "app" ? el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: async () => {
+      if (!confirm("Disconnect this YouTube account? Replies can't be posted to YouTube until one is connected again.")) return;
+      try { await api("/api/youtube/account", "DELETE"); await load(); } catch (err) { note(err.message, true); }
+    } }, "Disconnect") : el("span", { class: "muted hint" }, "(set in .env)");
+    body = [el("span", {}, who + since), disconnect,
+      el("a", { class: "btn btn-ghost btn-sm", href: "/api/youtube/connect" }, "Switch account")];
+  } else if (!yt.client_configured) {
+    body = [el("span", { class: "muted hint" }, "Not available: set YOUTUBE_OAUTH_CLIENT_ID / _SECRET in .env first.")];
+  } else {
+    body = [el("a", { class: "btn btn-primary btn-sm", href: "/api/youtube/connect" }, "Connect YouTube account"),
+      el("span", { class: "muted hint" }, "Sign in with the Google account that owns or manages the channel.")];
+  }
+  return el("div", { class: "rq-account" }, dot("youtube"), el("strong", {}, "YouTube account"), ...body);
 }
 
 function replaceItem(item) {
@@ -93,6 +137,7 @@ function setupBanner(d) {
     el("span", { class: `rq-cap ${c.auto ? "on" : "off"}`, title: c.reason || "Approved replies can be posted from here" },
       dot(p), label(p), c.auto ? " · auto-post" : " · copy & post by hand"));
   $("rq-setup").replaceChildren(
+    youtubeRow(),
     el("div", { class: "rq-caps" }, ...chips),
     ...lines.map((t) => el("p", { class: "notice error" }, t)),
     el("p", { class: "muted hint" }, `Auto-posting is limited to ${d.daily_limit} replies per platform per day.`));

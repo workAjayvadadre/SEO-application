@@ -10,6 +10,7 @@ There is no login: anyone who can reach the server can spend your API quota. It 
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import asyncio
 import logging
 import os
@@ -21,7 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -41,6 +42,8 @@ from market_scraper.trends import TrendsError, google_trends
 from market_scraper.scriptgen import ScriptGenError, generate_content
 from market_scraper.manual_answers import MAX_ANSWER_CHARS, MAX_ANSWERS_PER_QUESTION, ManualAnswers
 from market_scraper.answer_writer import AiAnswers, answers_for
+from market_scraper.youtube_account import (PendingSignIns, YouTubeAccount, YouTubeAuthError, auth_url,
+                                            client_configured, exchange, start_loopback)
 from market_scraper.publishers import capabilities
 from market_scraper.replies import ReplyError, ReplyQueue, draft_reply
 from market_scraper.store import SearchStore
@@ -50,6 +53,7 @@ DATA_DIR = Path(__file__).parent / "data" / "searches"
 MANUAL_ANSWERS_FILE = Path(__file__).parent / "data" / "manual_answers.json"
 REPLIES_FILE = Path(__file__).parent / "data" / "replies.json"
 AI_ANSWERS_FILE = Path(__file__).parent / "data" / "ai_answers.json"
+YOUTUBE_ACCOUNT_FILE = Path(__file__).parent / "data" / "youtube_account.json"
 _HASHTAG = re.compile(r"^[0-9A-Za-z_]{1,100}$")
 _HTTP_URL = r"^https?://"
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -270,7 +274,8 @@ class ExportBody(BaseModel):
 def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None,
                allowed_hosts: list[str] | None = None, store_dir: Path | None = None,
                manual_answers_file: Path | None = None, replies_file: Path | None = None,
-               ai_answers_file: Path | None = None) -> FastAPI:
+               ai_answers_file: Path | None = None, youtube_account_file: Path | None = None,
+               google_transport: httpx.BaseTransport | None = None) -> FastAPI:
     app = FastAPI(title="Market Scraper", docs_url=None, redoc_url=None, openapi_url=None)
     hosts = allowed_hosts or ["127.0.0.1", "localhost", "[::1]", "testserver"]
     # Blocks DNS-rebinding: a malicious site can't drive this server through the browser.
@@ -280,6 +285,10 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
     manual = ManualAnswers(manual_answers_file)  # no file (tests) = in memory only
     replies = ReplyQueue(settings, replies_file)  # no file (tests) = in memory only
     ai_answers = AiAnswers(ai_answers_file)  # no file (tests) = in memory only
+    youtube = YouTubeAccount(youtube_account_file)  # channel connected from the UI
+    sign_ins = PendingSignIns()
+    if youtube.refresh_token:  # a UI-connected channel wins over YOUTUBE_OAUTH_REFRESH_TOKEN in .env
+        replies.settings = replace(settings, youtube_oauth_refresh_token=youtube.refresh_token)
     writing = asyncio.Semaphore(1)  # one batch of Claude answers at a time
 
     @app.middleware("http")
@@ -326,7 +335,7 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
             "serp_configured": bool(settings.serp_provider),
             "content_writer": bool(settings.anthropic_api_key),
             "brand_name": settings.brand_name,
-            "reply_posting": capabilities(settings),
+            "reply_posting": capabilities(replies.settings),
             "campaign_channels": {k: v["label"] for k, v in CAMPAIGN_CHANNELS.items()},
         }
 
@@ -516,6 +525,60 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"answers": found, "writer": bool(settings.anthropic_api_key)}
 
+    # ------------------------------------------------------------ YouTube account (connect from the UI)
+
+    def finish_youtube(query: dict[str, str]) -> str:
+        """Complete a sign-in from Google's callback; returns where to send the browser."""
+        pending = sign_ins.take(query.get("state", ""))
+        if not pending:
+            return "/?youtube=expired#replies"
+        redirect, return_to = pending
+        if query.get("error") or not query.get("code"):
+            return f"{return_to}/?youtube=cancelled#replies"
+        try:
+            got = exchange(settings, query["code"], redirect, transport=google_transport)
+        except YouTubeAuthError as exc:
+            logging.getLogger("server").warning("YouTube connect failed: %s", exc)
+            return f"{return_to}/?youtube=failed#replies"
+        youtube.save(got["refresh_token"], got["email"])
+        replies.settings = replace(replies.settings, youtube_oauth_refresh_token=got["refresh_token"])
+        return f"{return_to}/?youtube=connected#replies"
+
+    @app.get("/api/youtube/account")
+    async def youtube_account() -> dict:
+        connected_in_env = bool(settings.youtube_oauth_refresh_token) and not youtube.refresh_token
+        return {**youtube.status(), "connected": bool(replies.settings.youtube_oauth_refresh_token),
+                "source": "env" if connected_in_env else "app", "client_configured": client_configured(settings)}
+
+    @app.get("/api/youtube/connect", include_in_schema=False)
+    async def youtube_connect(request: Request) -> Response:
+        if not client_configured(settings):
+            return RedirectResponse("/?youtube=no-client#replies", status_code=303)
+        base = str(request.base_url).rstrip("/")
+        own_callback = f"{base}/api/youtube/callback"
+        redirect = settings.youtube_oauth_redirect_url or own_callback
+        cb, own = urlsplit(redirect), urlsplit(own_callback)
+        if (cb.hostname, cb.port) != (own.hostname, own.port) or cb.path != own.path:
+            if cb.hostname not in ("localhost", "127.0.0.1") or cb.scheme != "http":
+                return RedirectResponse("/?youtube=bad-redirect#replies", status_code=303)
+            try:  # registered for another local port (e.g. the marketing app): answer there for this sign-in
+                start_loopback(redirect, finish_youtube)
+            except YouTubeAuthError:
+                return RedirectResponse("/?youtube=port-busy#replies", status_code=303)
+        state = sign_ins.new(redirect, base)
+        return RedirectResponse(auth_url(settings, redirect, state), status_code=303)
+
+    @app.get("/api/youtube/callback", include_in_schema=False)
+    async def youtube_callback(request: Request) -> Response:
+        location = await asyncio.to_thread(finish_youtube, dict(request.query_params))
+        return RedirectResponse(location, status_code=303)
+
+    @app.delete("/api/youtube/account", status_code=204)
+    async def youtube_disconnect() -> Response:
+        youtube.clear()
+        replies.settings = replace(replies.settings, youtube_oauth_refresh_token=settings.youtube_oauth_refresh_token)
+        return Response(status_code=204)
+
     # ------------------------------------------------------------ reply queue (ORM)
 
     def reply_call(fn, *args):
@@ -528,7 +591,7 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
 
     @app.get("/api/replies")
     async def list_replies() -> dict:
-        return {"items": replies.list(), "capabilities": capabilities(settings), "brand_name": settings.brand_name,
+        return {"items": replies.list(), "capabilities": capabilities(replies.settings), "brand_name": settings.brand_name,
                 "daily_limit": settings.reply_daily_limit, "drafting": bool(settings.anthropic_api_key)}
 
     @app.post("/api/replies")
@@ -606,7 +669,7 @@ def main() -> None:
         webbrowser.open(url)
     uvicorn.run(create_app(Settings.from_env(args.env_file), allowed_hosts=allowed, store_dir=DATA_DIR,
                            manual_answers_file=MANUAL_ANSWERS_FILE, replies_file=REPLIES_FILE,
-                           ai_answers_file=AI_ANSWERS_FILE),
+                           ai_answers_file=AI_ANSWERS_FILE, youtube_account_file=YOUTUBE_ACCOUNT_FILE),
                 host=args.host, port=args.port, log_level="warning")
 
 
