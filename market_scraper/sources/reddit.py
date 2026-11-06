@@ -179,6 +179,8 @@ class RedditSource(Source):
             replies = c.get("replies")
             reply_count = len(replies["data"]["children"]) if isinstance(replies, dict) else 0
             metrics = {"score": c.get("score", 0), "replies": reply_count, "subreddit": c.get("subreddit")}
+            if post.get("permalink"):  # links the comment back to its thread in open queries
+                metrics["question_url"] = f"https://www.reddit.com{post['permalink']}"
             records.append(Record(
                 platform=self.name, record_type="comment",
                 source_url=f"https://www.reddit.com{c.get('permalink', '')}",

@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from market_scraper import Aggregator, SearchRequest, Settings
-from market_scraper.http import FetchError, HttpClient, ProxyPool
+from market_scraper.http import API_USER_AGENT, FetchError, HttpClient, ProxyPool
 from market_scraper.serp import parse_serpapi, parse_serper
 from market_scraper.sources.quora import parse_qapage
 
@@ -107,6 +107,23 @@ def test_rotating_user_agent_header_is_sent():
 
     run(go())
     assert all(ua.startswith("Mozilla/5.0") for ua in seen)
+
+
+def test_official_api_calls_use_client_user_agent():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["User-Agent"])
+        return httpx.Response(200, json={})
+
+    async def go():
+        async with HttpClient(BASE, transport=httpx.MockTransport(handler)) as http:
+            await http.get_json("https://api.example.com/v1", use_proxy=False)
+            await http.get_json("https://api.example.com/v1", use_proxy=False, headers={"User-Agent": "custom/1"})
+
+    run(go())
+    assert seen[0] == API_USER_AGENT  # browser UAs trip corporate web filters (Zscaler) on API hosts
+    assert seen[1] == "custom/1"  # explicit headers (e.g. Reddit's required UA) still win
 
 
 def test_proxy_pool_skips_benched_proxies():
@@ -255,6 +272,42 @@ def test_reddit_falls_back_to_serp_without_api_keys():
     assert any(r["record_type"] == "comment" for r in reddit)
     assert len([r for r in reddit if r["record_type"] == "post"]) == 2  # subreddit page filtered out
     assert payload["platforms"]["reddit"]["status"] == "ok"
+
+
+def test_manual_answers_are_saved_and_attached_to_later_searches(tmp_path):
+    from fastapi.testclient import TestClient
+    from server import create_app
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "google.serper.dev":
+            return httpx.Response(200, json={"organic": [{
+                "title": "Can IVF fail? - Quora", "link": "https://www.quora.com/Can-IVF-fail",
+                "snippet": "", "position": 1}]})
+        return httpx.Response(403, text="blocked")  # the Quora page itself is unreadable
+
+    store = tmp_path / "manual.json"
+    app = create_app(replace(BASE, serper_api_key="k"), transport=httpx.MockTransport(handler),
+                     allowed_hosts=["testserver"], manual_answers_file=store)
+    with TestClient(app) as client:
+        body = {"query": "ivf", "platforms": ["quora"], "limit": 3, "comments": 0}
+        first = client.post("/api/search", json=body).json()["insights"]["open_queries"][0]
+        assert first["answers"] == [] and first["manual_answers"] == []
+
+        saved = client.put("/api/manual-answers", json={
+            "source_url": first["source_url"], "question": first["question"], "answers": ["Yes, sometimes."]})
+        assert saved.status_code == 200 and saved.json()["key"] == first["answer_key"]
+        assert client.put("/api/manual-answers", json={
+            "source_url": "javascript:alert(1)", "question": "x", "answers": ["y"]}).status_code == 422
+
+        again = client.post("/api/search", json=body).json()["insights"]["open_queries"][0]
+        assert [a["text"] for a in again["manual_answers"]] == ["Yes, sometimes."]
+        listed = client.get("/api/manual-answers").json()["answers"]
+        assert [a["text"] for a in listed[first["answer_key"]]] == ["Yes, sometimes."]
+
+        client.put("/api/manual-answers", json={"source_url": first["source_url"], "question": first["question"],
+                                                "answers": []})
+        assert client.get("/api/manual-answers").json()["answers"] == {}
+    assert store.exists(), "pasted answers persist on disk between server restarts"
 
 
 def test_scan_location_localises_google_and_reaches_every_query():

@@ -86,6 +86,15 @@ class Settings:
     content_model: str = "claude-opus-5-5"
     content_effort: str = "medium"
     brand_name: str | None = None  # institution's legal/brand name, shown on every generated piece (NMC 8.3 i)
+
+    # --- Reply queue: posting approved replies (each needs a human approval first) ---
+    reddit_username: str | None = None  # brand account; script-app password grant (2FA must be off)
+    reddit_password: str | None = None
+    youtube_oauth_client_id: str | None = None  # Google OAuth "Desktop app" client
+    youtube_oauth_client_secret: str | None = None
+    youtube_oauth_refresh_token: str | None = None  # from scripts/youtube_oauth.py
+    meta_page_access_token: str | None = None  # Page token with pages_manage_engagement / instagram_manage_comments
+    reply_daily_limit: int = 10  # max auto-posted replies per platform per day (spam guard)
     own_brand_terms: tuple[str, ...] = ("indira",)  # searches naming us: label "own brand"
     competitor_terms: tuple[str, ...] = ()  # extra competitor names on top of the built-in list
 
@@ -153,6 +162,13 @@ class Settings:
             content_model=_get("CONTENT_MODEL", "claude-opus-5-5"),
             content_effort=_get("CONTENT_EFFORT", "medium"),
             brand_name=_get("BRAND_NAME"),
+            reddit_username=_get("REDDIT_USERNAME"),
+            reddit_password=_get("REDDIT_PASSWORD"),
+            youtube_oauth_client_id=_get("YOUTUBE_OAUTH_CLIENT_ID"),
+            youtube_oauth_client_secret=_get("YOUTUBE_OAUTH_CLIENT_SECRET"),
+            youtube_oauth_refresh_token=_get("YOUTUBE_OAUTH_REFRESH_TOKEN"),
+            meta_page_access_token=_get("META_PAGE_ACCESS_TOKEN"),
+            reply_daily_limit=_int("REPLY_DAILY_LIMIT", 10),
             own_brand_terms=_csv("OWN_BRAND_TERMS") or ("indira",),
             competitor_terms=_csv("COMPETITOR_TERMS"),
             playwright_enabled=_bool("PLAYWRIGHT_ENABLED", False),

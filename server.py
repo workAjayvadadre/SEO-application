@@ -16,11 +16,12 @@ import os
 import re
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -38,11 +39,19 @@ from market_scraper.regional import resolve_place
 from market_scraper.regional_research import regional_brief
 from market_scraper.trends import TrendsError, google_trends
 from market_scraper.scriptgen import ScriptGenError, generate_content
+from market_scraper.manual_answers import MAX_ANSWER_CHARS, MAX_ANSWERS_PER_QUESTION, ManualAnswers
+from market_scraper.answer_writer import AiAnswers, answers_for
+from market_scraper.publishers import capabilities
+from market_scraper.replies import ReplyError, ReplyQueue, draft_reply
 from market_scraper.store import SearchStore
 
 UI_DIR = Path(__file__).parent / "ui"
 DATA_DIR = Path(__file__).parent / "data" / "searches"
+MANUAL_ANSWERS_FILE = Path(__file__).parent / "data" / "manual_answers.json"
+REPLIES_FILE = Path(__file__).parent / "data" / "replies.json"
+AI_ANSWERS_FILE = Path(__file__).parent / "data" / "ai_answers.json"
 _HASHTAG = re.compile(r"^[0-9A-Za-z_]{1,100}$")
+_HTTP_URL = r"^https?://"
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 # Scraped content is untrusted. The page renders it as text only, and this CSP is a second line of defence.
@@ -183,6 +192,64 @@ class TrendsBody(BaseModel):
         return value
 
 
+class ManualAnswersBody(BaseModel):
+    """Answers pasted by hand for one open query. An empty list removes them."""
+    source_url: str = Field(min_length=1, max_length=2000, pattern=_HTTP_URL)
+    question: str = Field(min_length=1, max_length=300)
+    answers: list[str] = Field(default_factory=list, max_length=MAX_ANSWERS_PER_QUESTION)
+
+    @field_validator("answers")
+    @classmethod
+    def _clean_answers(cls, value: list[str]) -> list[str]:
+        if any(len(a) > MAX_ANSWER_CHARS for a in value):
+            raise ValueError(f"each answer can be at most {MAX_ANSWER_CHARS} characters")
+        return [a for a in value if a.strip()]
+
+
+_PERSON = Field(min_length=2, max_length=80, pattern=r"^[^\x00-\x1f<>]+$")
+
+
+class ReplyAddBody(BaseModel):
+    question: str = Field(min_length=1, max_length=300)
+    platform: Literal["google", "reddit", "quora", "youtube", "instagram", "facebook"]
+    record_type: str = Field("question", max_length=40)
+    source_url: str = Field(min_length=1, max_length=2000, pattern=_HTTP_URL)
+    graph_id: str | None = Field(None, max_length=64, pattern=r"^[0-9_]+$")
+    context: list[str] = Field(default_factory=list, max_length=10)
+    reply: str | None = Field(None, max_length=3000)  # start from a written answer (disclosure line added)
+
+
+class OpenAnswerItem(BaseModel):
+    question: str = Field(min_length=1, max_length=300)
+    source_url: str = Field(min_length=1, max_length=2000, pattern=_HTTP_URL)
+    platform: str = Field(max_length=20)
+    context: list[str] = Field(default_factory=list, max_length=5)
+
+
+class OpenAnswersBody(BaseModel):
+    items: list[OpenAnswerItem] = Field(min_length=1, max_length=30)
+    generate: bool = False  # False: only return cached answers (no Claude call)
+    refresh: bool = False  # True: rewrite even the cached ones
+
+
+class ReplyEditBody(BaseModel):
+    reply: str = Field(max_length=3000)
+
+
+class ReplyApproveBody(BaseModel):
+    approver: str = _PERSON
+
+
+class ReplyPostBody(BaseModel):
+    by: str = _PERSON
+    confirm: Literal[True]  # explicit: the client must say it means to publish
+
+
+class ReplyMarkPostedBody(BaseModel):
+    by: str = _PERSON
+    url: str | None = Field(None, max_length=2000, pattern=_HTTP_URL)
+
+
 class AiQuestionsBody(BaseModel):
     keyword: str = Field(min_length=1, max_length=100)
     country: str = Field("in", pattern=r"^[A-Za-z]{2}$")
@@ -201,18 +268,47 @@ class ExportBody(BaseModel):
 
 
 def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None,
-               allowed_hosts: list[str] | None = None, store_dir: Path | None = None) -> FastAPI:
+               allowed_hosts: list[str] | None = None, store_dir: Path | None = None,
+               manual_answers_file: Path | None = None, replies_file: Path | None = None,
+               ai_answers_file: Path | None = None) -> FastAPI:
     app = FastAPI(title="Market Scraper", docs_url=None, redoc_url=None, openapi_url=None)
+    hosts = allowed_hosts or ["127.0.0.1", "localhost", "[::1]", "testserver"]
     # Blocks DNS-rebinding: a malicious site can't drive this server through the browser.
-    app.add_middleware(TrustedHostMiddleware,
-                       allowed_hosts=allowed_hosts or ["127.0.0.1", "localhost", "[::1]", "testserver"])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
     searches = asyncio.Semaphore(2)  # protects API quotas from a burst of clicks
     store = SearchStore(store_dir)  # no directory (tests) = in memory only
+    manual = ManualAnswers(manual_answers_file)  # no file (tests) = in memory only
+    replies = ReplyQueue(settings, replies_file)  # no file (tests) = in memory only
+    ai_answers = AiAnswers(ai_answers_file)  # no file (tests) = in memory only
+    writing = asyncio.Semaphore(1)  # one batch of Claude answers at a time
+
+    @app.middleware("http")
+    async def same_origin_writes(request: Request, call_next):
+        """Another website open in the browser must never be able to post replies through this server."""
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = request.headers.get("origin")
+            if origin:
+                origin_host = (urlsplit(origin).hostname or "").lower()
+                own_host = (urlsplit(f"//{request.headers.get('host', '')}").hostname or "").lower()
+                # Same site (incl. the public name behind nginx) or a listed host; "*" never counts here.
+                trusted = {h.strip("[]").lower() for h in hosts if h != "*"} | {own_host}
+                if origin_host not in trusted:
+                    return JSONResponse({"detail": "Cross-origin request refused."}, status_code=403)
+        return await call_next(request)
+
+    def with_manual_answers(payload: dict) -> dict:
+        for q in payload.get("insights", {}).get("open_queries", []):
+            q["manual_answers"] = manual.get(q.get("answer_key", ""))
+            q["ai_answer"] = ai_answers.get(q.get("answer_key", ""))
+        return payload
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response: Response = await call_next(request)
         response.headers.update(SECURITY_HEADERS)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            # Revalidate on every load (cheap 304 via ETag) so an update never runs against stale JS.
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     @app.get("/", include_in_schema=False)
@@ -229,6 +325,8 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
                          "country": settings.search_country, "language": settings.search_language},
             "serp_configured": bool(settings.serp_provider),
             "content_writer": bool(settings.anthropic_api_key),
+            "brand_name": settings.brand_name,
+            "reply_posting": capabilities(settings),
             "campaign_channels": {k: v["label"] for k, v in CAMPAIGN_CHANNELS.items()},
         }
 
@@ -390,9 +488,89 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
                                 hashtags=tuple(body.hashtags), geo_location=geo, time_range=body.time_range)
         async with searches:
             try:
-                return await Aggregator(settings, transport=transport).run(request, body.platforms)
+                result = await Aggregator(settings, transport=transport).run(request, body.platforms)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return with_manual_answers(result)
+
+    @app.get("/api/manual-answers")
+    async def list_manual_answers() -> dict:
+        """Every pasted answer, keyed by answer_key (also used to refresh results files opened from disk)."""
+        return {"answers": {k: v["answers"] for k, v in manual.all().items()}}
+
+    @app.put("/api/manual-answers")
+    async def save_manual_answers(body: ManualAnswersBody) -> dict:
+        return manual.set(body.source_url, body.question, body.answers)
+
+    @app.post("/api/open-answers")
+    async def open_answers(body: OpenAnswersBody) -> dict:
+        """Claude-written answers for open queries, keyed by answer_key. generate=False only reads the cache."""
+        items = [i.model_dump() for i in body.items]
+        try:
+            if body.generate:
+                async with writing:
+                    found = await answers_for(settings, ai_answers, items, generate=True, refresh=body.refresh)
+            else:
+                found = await answers_for(settings, ai_answers, items, generate=False)
+        except ScriptGenError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"answers": found, "writer": bool(settings.anthropic_api_key)}
+
+    # ------------------------------------------------------------ reply queue (ORM)
+
+    def reply_call(fn, *args):
+        try:
+            return fn(*args)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Reply not found.") from exc
+        except ReplyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/replies")
+    async def list_replies() -> dict:
+        return {"items": replies.list(), "capabilities": capabilities(settings), "brand_name": settings.brand_name,
+                "daily_limit": settings.reply_daily_limit, "drafting": bool(settings.anthropic_api_key)}
+
+    @app.post("/api/replies")
+    async def add_reply(body: ReplyAddBody) -> dict:
+        return replies.add(question=body.question, platform=body.platform, record_type=body.record_type,
+                           source_url=body.source_url, graph_id=body.graph_id, context=body.context,
+                           reply=body.reply)
+
+    @app.post("/api/replies/{item_id}/draft")
+    async def draft_reply_route(item_id: str) -> dict:
+        item = reply_call(replies.get, item_id)
+        try:
+            drafted = await draft_reply(settings, item)
+        except ScriptGenError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return reply_call(replies.set_draft, item_id, drafted)
+
+    @app.put("/api/replies/{item_id}")
+    async def edit_reply(item_id: str, body: ReplyEditBody) -> dict:
+        return reply_call(replies.edit, item_id, body.reply)
+
+    @app.post("/api/replies/{item_id}/approve")
+    async def approve_reply(item_id: str, body: ReplyApproveBody) -> dict:
+        return reply_call(replies.approve, item_id, body.approver.strip())
+
+    @app.post("/api/replies/{item_id}/post")
+    async def post_reply(item_id: str, body: ReplyPostBody) -> dict:
+        try:
+            return await replies.post(item_id, body.by.strip(), transport=transport)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Reply not found.") from exc
+        except ReplyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/replies/{item_id}/mark-posted")
+    async def mark_reply_posted(item_id: str, body: ReplyMarkPostedBody) -> dict:
+        return reply_call(replies.mark_posted, item_id, body.url, body.by.strip())
+
+    @app.delete("/api/replies/{item_id}", status_code=204)
+    async def delete_reply(item_id: str) -> Response:
+        reply_call(replies.delete, item_id)
+        return Response(status_code=204)
 
     app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
     return app
@@ -426,7 +604,9 @@ def main() -> None:
     print(f"Keyword Studio UI: {url}")
     if args.open:
         webbrowser.open(url)
-    uvicorn.run(create_app(Settings.from_env(args.env_file), allowed_hosts=allowed, store_dir=DATA_DIR),
+    uvicorn.run(create_app(Settings.from_env(args.env_file), allowed_hosts=allowed, store_dir=DATA_DIR,
+                           manual_answers_file=MANUAL_ANSWERS_FILE, replies_file=REPLIES_FILE,
+                           ai_answers_file=AI_ANSWERS_FILE),
                 host=args.host, port=args.port, log_level="warning")
 
 

@@ -30,7 +30,10 @@ USER_AGENTS: tuple[str, ...] = (
     "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
 )
 
-API_USER_AGENT = "market-scraper/1.0 (+python-httpx)"
+# Official, key-authenticated APIs get an honest client UA. Corporate web filters (e.g. Zscaler) apply their
+# *browsing* policy to requests that look like a browser and block categories such as YouTube, returning a
+# 403 HTML page; a non-browser UA is treated as an application call and passes.
+API_USER_AGENT = "KeywordStudio/1.0 (+https://github.com/encode/httpx)"
 
 RETRY_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 524})
 # 403 usually means "blocked" on scraped pages (worth retrying through another proxy/UA),
@@ -188,10 +191,8 @@ class HttpClient:
 
         for attempt in range(retries + 1):
             proxy = self.proxies.next() if use_proxy else None
-            # Official APIs get an honest client UA; a fake browser UA there gains nothing and some
-            # corporate proxies (e.g. Zscaler) demand browser sign-in for anything claiming to be a browser.
-            request_headers = (browser_headers(random_user_agent()) if browser_like
-                               else {"User-Agent": API_USER_AGENT})
+            ua = API_USER_AGENT if not use_proxy and not browser_like else random_user_agent()
+            request_headers = browser_headers(ua) if browser_like else {"User-Agent": ua}
             if headers:
                 request_headers.update(headers)
 
@@ -228,6 +229,15 @@ class HttpClient:
 
         assert last_error is not None
         raise last_error
+
+    async def reachable(self, url: str, timeout: float = 6.0) -> bool:
+        """One quick attempt, no retries: can we open a connection to this host at all?
+        Any HTTP answer (even 4xx) counts; only network failures (blocked, timeout, DNS) return False."""
+        try:
+            await self._client(None).get(url, timeout=timeout, headers={"User-Agent": API_USER_AGENT})
+            return True
+        except httpx.TransportError:
+            return False
 
     async def get_json(self, url: str, **kwargs: Any) -> Any:
         return await self.json("GET", url, **kwargs)

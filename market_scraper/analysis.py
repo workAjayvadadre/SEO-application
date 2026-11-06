@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable
 from typing import Any
 
+from .manual_answers import answer_key, url_key
 from .models import USER_GENERATED_TYPES, Record
 from .utils import query_terms
 
@@ -121,6 +122,29 @@ def _is_question(text: str) -> bool:
     return text.endswith("?") or bool(_QUESTION_START.match(text))
 
 
+_SOCIAL = frozenset({"instagram", "facebook", "youtube"})
+# A question sentence inside a caption or title: "...Both are fertility... IVF vs egg freezing: what's the difference?"
+_QUESTION_SENTENCE = re.compile(r"[^.!?\n•|]{8,220}\?")
+_TRIM = " \"'“”‘’-–—:·…"
+_LEAD_IN = re.compile(r"^(?:(?:many|most|some|people|patients|couples|you|they|everyone|often)\s+)*"
+                      r"(?:ask|asks|asked|wonder|question|q|faq)\s*:\s*", re.I)
+
+
+def _question_text(r: Record) -> str:
+    """The question a record asks. Social posts often carry it mid-title or in the caption, not as the title."""
+    if r.record_type == "comment":
+        return r.content_snippet or ""
+    title = r.title or ""
+    if r.record_type in {"people_also_ask", "question"} or _is_question(title) or r.platform not in _SOCIAL:
+        return title
+    for text in (title, r.content_snippet or ""):
+        for m in _QUESTION_SENTENCE.finditer(text):
+            candidate = _LEAD_IN.sub("", m.group(0).strip(_TRIM)).strip(_TRIM)
+            if len(candidate.split()) >= 3:
+                return candidate[0].upper() + candidate[1:]
+    return title
+
+
 def _answers(r: Record) -> int | None:
     """How many replies the question already has, when the platform tells us."""
     m = r.metrics or {}
@@ -137,19 +161,51 @@ def _why_open(r: Record, answers: int | None) -> str:
         return "Google surfaces it as a common question"
     if answers is not None:
         return f"{answers} answers so far"
-    return "few visible answers"
+    return "answer count unavailable (page not readable)"
+
+
+MAX_ATTACHED_ANSWERS = 5
+
+
+def _answer_item(r: Record, source: str) -> dict[str, Any]:
+    m = r.metrics or {}
+    votes = m.get("upvotes") if m.get("upvotes") is not None else m.get("score")
+    return {"text": (r.content_snippet or "")[:2000], "author": r.author, "url": r.source_url,
+            "votes": votes, "published_at": r.published_at, "source": source}
+
+
+def _fetched_answers(records: list[Record]) -> dict[str, list[Record]]:
+    """Quora answers and Reddit comments, grouped by the question/thread they reply to."""
+    by_question: dict[str, list[Record]] = defaultdict(list)
+    for r in records:
+        parent = (r.metrics or {}).get("question_url")
+        if parent and r.record_type in {"answer", "comment"} and r.content_snippet:
+            by_question[url_key(parent)].append(r)
+    for items in by_question.values():
+        items.sort(key=lambda a: a.engagement_score, reverse=True)
+    return by_question
+
+
+def _attached_answers(r: Record, by_question: dict[str, list[Record]]) -> list[dict[str, Any]]:
+    if r.record_type == "people_also_ask":  # Google shows its own answer snippet under the question
+        return [_answer_item(r, "Google snippet")] if r.content_snippet else []
+    if r.record_type == "comment":  # the question is itself a comment; replies aren't collected
+        return []
+    return [_answer_item(a, a.platform) for a in by_question.get(url_key(r.source_url), [])[:MAX_ATTACHED_ANSWERS]]
 
 
 def open_queries(records: list[Record], top_n: int = 40) -> list[dict[str, Any]]:
     """Questions where a clear, compliant answer would be welcome: asked with interest, answered thinly.
 
     Score = engagement / (1 + existing answers). Unknown answer counts (search listings) score as 1 answer.
-    Each item says why it is open and what kind of content could respond (NMC Class A education).
+    Each item says why it is open and what kind of content could respond (NMC Class A education), and
+    carries the answers we could read (`answers`) plus an `answer_key` for answers pasted by hand.
     """
+    by_question = _fetched_answers(records)
     seen: set[str] = set()
     out = []
     for r in records:
-        text = (r.content_snippet if r.record_type == "comment" else r.title) or ""
+        text = _question_text(r)
         if not (r.record_type in {"people_also_ask", "question"} or _is_question(text)):
             continue
         key = re.sub(r"\W+", " ", text.casefold()).strip()[:140]
@@ -157,11 +213,19 @@ def open_queries(records: list[Record], top_n: int = 40) -> list[dict[str, Any]]
             continue
         seen.add(key)
         answers = _answers(r)
+        if answers is None:  # the question's own page reports a total even when the listing didn't
+            fetched = by_question.get(url_key(r.source_url), [])
+            answers = next((a.metrics["question_answer_count"] for a in fetched
+                            if isinstance(a.metrics.get("question_answer_count"), int)), None)
         score = (r.engagement_score or 0.5) / (1 + (answers if answers is not None else 1))
-        out.append({"question": text.strip()[:300], "platform": r.platform, "record_type": r.record_type,
+        question = text.strip()[:300]
+        out.append({"question": question, "platform": r.platform, "record_type": r.record_type,
                     "existing_answers": answers, "engagement_score": r.engagement_score,
                     "opportunity": round(score, 3), "why_open": _why_open(r, answers), "source_url": r.source_url,
-                    "published_at": r.published_at, "suggested_class": "A (public-health education)"})
+                    "published_at": r.published_at, "suggested_class": "A (public-health education)",
+                    "answers": _attached_answers(r, by_question),
+                    "graph_id": (r.metrics or {}).get("graph_id"),  # Meta post/media id, for reply posting
+                    "answer_key": answer_key(r.source_url, question)})
     out.sort(key=lambda q: q["opportunity"], reverse=True)
     return out[:top_n]
 

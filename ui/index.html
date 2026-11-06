@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Keyword Studio</title>
-  <link rel="stylesheet" href="/static/styles.css">
-  <script type="module" src="/static/app.js"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=4">
+  <script type="module" src="/static/app.js?v=4"></script>
 </head>
 <body>
   <header class="topbar">
@@ -32,6 +32,9 @@
         <a href="#keywords">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
           <span>Keyword calendar</span></a>
+        <a href="#replies">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>
+          <span>Reply queue</span></a>
       </nav>
       <label id="file-label" class="btn btn-ghost" title="Open a results JSON saved earlier">
         Open results file
@@ -301,6 +304,32 @@
         </div>
       </form>
     </dialog>
+  </main>
+
+  <main class="wrap" id="replies-view" hidden>
+    <div class="page-head">
+      <h1>Reply queue</h1>
+      <p class="muted">Answer open questions as the institution's official account. Each reply is drafted (by Claude or by hand), NMC-checked, approved by a named reviewer, then posted through the platform's API where that is allowed, or copied and posted by hand everywhere else (Quora). Every step is logged.</p>
+    </div>
+    <section class="card rq-top">
+      <div class="form-grid">
+        <label>Reviewer (your name, recorded on approvals and posts)
+          <input id="rq-reviewer" type="text" maxlength="80" autocomplete="name" placeholder="e.g. Priya S., Digital team">
+        </label>
+      </div>
+      <div id="rq-setup"></div>
+      <p id="rq-notice" class="notice" hidden></p>
+    </section>
+    <div class="rq-bar">
+      <div id="rq-tabs" class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-filter="open">To do <span class="n">0</span></button>
+        <button type="button" class="tab" role="tab" data-filter="approved">Approved <span class="n">0</span></button>
+        <button type="button" class="tab" role="tab" data-filter="posted">Posted <span class="n">0</span></button>
+        <button type="button" class="tab" role="tab" data-filter="all">All <span class="n">0</span></button>
+      </div>
+      <button id="rq-refresh" class="btn btn-ghost btn-sm" type="button">Refresh</button>
+    </div>
+    <div id="rq-list" class="rq-list"></div>
   </main>
 
   <main class="wrap" id="trends-view" hidden>

@@ -5,8 +5,9 @@ Quota cost per run ≈ 100 (search) + 1 (videos) + 1 per comment thread page. De
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 from ..http import FetchError
 from ..models import Platform, Record, SearchRequest
@@ -22,17 +23,50 @@ _WINDOWS = {"day": timedelta(days=1), "week": timedelta(weeks=1), "month": timed
             "year": timedelta(days=365)}
 
 
+API_DOWN_SECONDS = 15 * 60
+
+
 class YouTubeSource(Source):
     name = Platform.YOUTUBE
+    _api_down_until: ClassVar[float] = 0.0  # shared across runs: skip the probe while the API is known blocked
 
     def availability(self) -> tuple[bool, str]:
-        return (True, "") if self.settings.youtube_api_key else (False, "Set YOUTUBE_API_KEY")
+        if self.settings.youtube_api_key or self.serp.configured:
+            return True, ""
+        return False, "Set YOUTUBE_API_KEY (or a SERP key to find videos through Google)"
+
+    async def collect(self, request: SearchRequest) -> list[Record]:
+        """Official API when reachable; otherwise videos found through Google (no comments on that path).
+        Corporate networks often block www.googleapis.com, which would otherwise cost ~2 minutes per search."""
+        if self.settings.youtube_api_key and await self._api_up():
+            try:
+                return await self._collect_api(request)
+            except FetchError as exc:
+                if not self.serp.configured:
+                    raise
+                if exc.status is None:
+                    type(self)._api_down_until = time.monotonic() + API_DOWN_SECONDS
+                self.warnings.append(f"YouTube API failed ({exc}); showing videos found through Google instead.")
+        elif self.settings.youtube_api_key:
+            self.warnings.append("YouTube API is unreachable from this network (www.googleapis.com blocked); "
+                                 "showing videos found through Google instead, without comments.")
+        if not self.serp.configured:
+            raise FetchError("YouTube API unreachable and no SERP key for the Google fallback")
+        return await self.site_discovery("youtube.com", request, link_filter="youtube.com/")
+
+    async def _api_up(self) -> bool:
+        if time.monotonic() < type(self)._api_down_until:
+            return False
+        if await self.http.reachable(f"{API}/videos"):
+            return True
+        type(self)._api_down_until = time.monotonic() + API_DOWN_SECONDS
+        return False
 
     async def _get(self, endpoint: str, **params: Any) -> dict[str, Any]:
         return await self.http.get_json(f"{API}/{endpoint}", use_proxy=False,
                                         params={**params, "key": self.settings.youtube_api_key})
 
-    async def collect(self, request: SearchRequest) -> list[Record]:
+    async def _collect_api(self, request: SearchRequest) -> list[Record]:
         extra: dict[str, Any] = {}
         if request.time_range in _WINDOWS:
             since = datetime.now(timezone.utc) - _WINDOWS[request.time_range]

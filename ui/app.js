@@ -6,6 +6,7 @@ import { initExplore, routeExplore } from "./explore.js";
 import { initKeywords, startPlan } from "./keywords.js";
 import { OPEN_QUERIES_KEY, initCampaign, refreshOpenQueriesHint } from "./campaign.js";
 import { initTrends } from "./trends.js";
+import { addToReplyQueue, initReplies, showReplies } from "./replies.js";
 
 const TYPE_LABELS = {
   organic_result: "Search result", people_also_ask: "People also ask", related_search: "Related search",
@@ -185,6 +186,7 @@ function showReport(payload) {
   renderQuestions(payload.insights?.audience_questions || []);
   renderPainPoints(payload.insights?.pain_points || []);
   renderOpenQueries(payload.insights?.open_queries || []);
+  refreshManualAnswers(payload).then(() => writeAnswers(payload));
   renderBreakdown(payload.insights?.platform_breakdown || {});
   renderResults();
   try {
@@ -194,13 +196,207 @@ function showReport(payload) {
   } catch { /* storage unavailable */ }
 }
 
-function renderOpenQueries(items) {
+// ------------------------------------------------------------ open queries + answers
+
+const SOURCE_LABEL = { quora: "Quora answer", reddit: "Reddit reply", "Google snippet": "Google snippet" };
+
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch { // clipboard API unavailable: fall back to a hidden textarea
+    const area = el("textarea", { "aria-hidden": "true", class: "offscreen" });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  if (button) {
+    const before = button.textContent;
+    button.textContent = "Copied ✓";
+    setTimeout(() => { button.textContent = before; }, 1200);
+  }
+}
+
+function questionWithAnswers(q) {
+  const lines = [`Q: ${q.question}`, `Link: ${q.source_url}`];
+  (q.answers || []).forEach((a, i) => lines.push("", `Answer ${i + 1} (${SOURCE_LABEL[a.source] || a.source}${a.author ? `, ${a.author}` : ""}):`, a.text));
+  (q.manual_answers || []).forEach((a, i) => lines.push("", `Pasted answer ${i + 1}:`, a.text));
+  return lines.join("\n");
+}
+
+async function saveManualAnswers(q, texts, status) {
+  status.textContent = "Saving…";
+  try {
+    const res = await fetch("/api/manual-answers", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_url: q.source_url, question: q.question, answers: texts }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(describeError(data.detail) || `HTTP ${res.status}`);
+    q.manual_answers = data.answers || [];
+    renderOpenQueries(state.payload?.insights?.open_queries || [], q.answer_key);
+  } catch (err) {
+    status.textContent = `Couldn't save: ${err.message}`;
+  }
+}
+
+function answerBlock(a, kind, actions) {
+  const when = a.published_at || a.added_at;
+  const meta = [kind, a.author, a.votes != null ? `${a.votes} votes` : null, when ? String(when).slice(0, 10) : null]
+    .filter(Boolean).join(" · ");
+  return el("li", { class: "answer" },
+    el("div", { class: "answer-meta muted" }, meta),
+    el("p", { class: "answer-text" }, a.text),
+    el("div", { class: "answer-actions" }, ...actions));
+}
+
+function copyButton(text) {
+  const button = el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: () => copyText(text, button) }, "Copy");
+  return button;
+}
+
+function answersPanel(q, open) {
+  const fetched = q.answers || [];
+  const manual = q.manual_answers || [];
+  const status = el("span", { class: "muted hint", role: "status" });
+  const box = el("textarea", { class: "answer-input", rows: 4, maxlength: 5000,
+    placeholder: "Paste an answer copied from the question page…", "aria-label": `Paste an answer for: ${q.question}` });
+
+  const list = el("ul", { class: "answers" },
+    ...fetched.map((a) => answerBlock(a, SOURCE_LABEL[a.source] || a.source,
+      [copyButton(a.text), a.url && a.url !== q.source_url ? link(a.url, "Open ↗") : null])),
+    ...manual.map((a, i) => answerBlock(a, "Pasted by you", [copyButton(a.text),
+      el("button", { type: "button", class: "btn btn-ghost btn-sm",
+        onclick: () => saveManualAnswers(q, manual.filter((_, j) => j !== i).map((m) => m.text), status) }, "Remove")])));
+
+  let written = null;
+  if (q.ai_answer?.answer) {
+    const useBtn = el("button", { type: "button", class: "btn btn-primary btn-sm", onclick: async () => {
+      status.textContent = "Adding…";
+      try { await addToReplyQueue(q, q.ai_answer.answer); } catch (err) { status.textContent = `Couldn't add: ${err.message}`; }
+    } }, "Use as reply");
+    const flags = q.ai_answer.nmc_flags || [];
+    written = el("div", { class: "answer ai-answer" },
+      el("div", { class: "answer-meta muted" }, "Written by Claude · review before posting"),
+      el("p", { class: "answer-text" }, q.ai_answer.answer),
+      flags.length ? el("p", { class: "notice error" }, `NMC check: ${flags.map((f) => `"${f.match}" (${f.issue})`).join("; ")}. Edit before use.`) : null,
+      el("div", { class: "answer-actions" }, copyButton(q.ai_answer.answer), useBtn));
+  }
+
+  let notice = null;
+  if (!fetched.length) {
+    notice = el("p", { class: "muted hint" }, q.record_type === "comment"
+      ? "This question was asked in a comment; replies aren't collected. Open it, copy a reply and paste it below."
+      : `The app couldn't read answers from ${label(q.platform)} (the site blocks automated reads). Open the question, copy an answer and paste it below.`);
+  }
+
+  const save = el("button", { type: "button", class: "btn btn-primary btn-sm", onclick: () => {
+    if (!box.value.trim()) { status.textContent = "Paste an answer first."; return; }
+    saveManualAnswers(q, [...manual.map((m) => m.text), box.value], status);
+  } }, "Save answer");
+  const copyAll = el("button", { type: "button", class: "btn btn-ghost btn-sm",
+    onclick: () => copyText(questionWithAnswers(q), copyAll) }, "Copy question + answers");
+  const queue = el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: async () => {
+    status.textContent = "Adding…";
+    try { await addToReplyQueue(q); } catch (err) { status.textContent = `Couldn't add: ${err.message}`; }
+  } }, "Add to reply queue");
+
+  const total = fetched.length + manual.length;
+  let summary = "Answers: none yet, add one";
+  if (written) summary = total ? `Written answer + ${total} more` : "Written answer & options";
+  else if (total) summary = `Answers (${total})`;
+  return el("details", { class: "answers-panel", open: open || null },
+    el("summary", {}, summary),
+    written, total ? list : null, notice,
+    el("div", { class: "answer-form" }, box,
+      el("div", { class: "answer-actions" }, save, link(q.source_url, "Open question ↗"), copyAll, queue, status)));
+}
+
+function renderOpenQueries(items, openKey = null) {
   const head = el("thead", {}, el("tr", {}, ...["Question", "Where", "Answers", "Why it's open", "Score"].map((h) => el("th", {}, h))));
-  $("open-queries").replaceChildren(head, el("tbody", {}, ...(items.length ? items.slice(0, 30).map((q) => el("tr", {},
-    el("td", {}, link(q.source_url, q.question)),
-    el("td", { class: "nowrap" }, dot(q.platform), " ", label(q.platform)),
-    el("td", {}, q.existing_answers ?? "–"), el("td", {}, q.why_open), el("td", {}, q.opportunity)))
+  const rows = items.slice(0, 30).map((q) => {
+    const read = (q.answers || []).length;
+    const pasted = (q.manual_answers || []).length;
+    const counts = [read ? `${read} shown` : null, pasted ? `${pasted} pasted` : null].filter(Boolean).join(" · ");
+    let answerCell;
+    if (q.ai_answer?.answer) {
+      answerCell = el("div", {}, el("p", { class: "oq-answer" }, q.ai_answer.answer),
+        el("div", { class: "muted hint" }, ["Written by Claude", q.existing_answers != null ? `${q.existing_answers} on the site` : null, counts]
+          .filter(Boolean).join(" · ")));
+    } else {
+      answerCell = el("div", {}, oq.writing ? el("span", { class: "muted hint" }, "Writing…") : (q.existing_answers ?? "–"),
+        counts ? el("div", { class: "muted hint" }, counts) : null);
+    }
+    return el("tr", {},
+      el("td", { class: "oq-question" }, link(q.source_url, q.question), answersPanel(q, openKey && q.answer_key === openKey)),
+      el("td", { class: "nowrap" }, dot(q.platform), " ", label(q.platform)),
+      el("td", { class: "oq-answer-cell" }, answerCell),
+      el("td", {}, q.why_open), el("td", {}, q.opportunity));
+  });
+  $("open-queries").replaceChildren(head, el("tbody", {}, ...(rows.length ? rows
     : [el("tr", {}, el("td", { colspan: 5, class: "none" }, "No open questions found in these results."))])));
+}
+
+const oq = { writing: false };
+
+function oqStatus(text, isError = false) {
+  let box = $("oq-status");
+  if (!box) {
+    box = el("div", { id: "oq-status", class: "oq-status" });
+    $("open-queries").closest(".table-wrap").before(box);
+  }
+  const rewrite = el("button", { type: "button", class: "btn btn-ghost btn-sm",
+    onclick: () => writeAnswers(state.payload, { refresh: true }) }, "Rewrite all answers");
+  box.replaceChildren(el("span", { class: `hint ${isError ? "error-text" : "muted"}` }, text),
+    oq.writing || !state.payload?.insights?.open_queries?.length ? null : rewrite);
+}
+
+/** Fill the Answers column: cached answers first, then Claude writes the missing ones in one batch. */
+async function writeAnswers(payload, { refresh = false } = {}) {
+  const items = (payload.insights?.open_queries || []).slice(0, 30);
+  if (!items.length || oq.writing) return;
+  const body = (generate) => JSON.stringify({ generate, refresh, items: items.map((q) => ({
+    question: q.question, source_url: q.source_url, platform: q.platform,
+    context: [...(q.answers || []), ...(q.manual_answers || [])].map((a) => a.text).slice(0, 5) })) });
+  const merge = (answers) => items.forEach((q) => { if (answers[q.answer_key]) q.ai_answer = answers[q.answer_key]; });
+  const post = async (generate) => {
+    const res = await fetch("/api/open-answers", { method: "POST", headers: { "Content-Type": "application/json" }, body: body(generate) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(describeError(data.detail) || `HTTP ${res.status}`);
+    return data;
+  };
+  try {
+    const cached = await post(false);
+    merge(cached.answers || {});
+    const missing = refresh || items.some((q) => !q.ai_answer);
+    if (!missing) { oqStatus("Answers written by Claude: review each one before you post it anywhere."); return; }
+    if (!cached.writer) { oqStatus("Add ANTHROPIC_API_KEY to .env to have Claude write an answer for every question."); return; }
+    oq.writing = true;
+    oqStatus(`Claude is writing answers for ${items.length} questions… (about a minute)`);
+    if (state.payload === payload) renderOpenQueries(payload.insights.open_queries);
+    const fresh = await post(true);
+    merge(fresh.answers || {});
+    oq.writing = false;
+    oqStatus("Answers written by Claude: review each one before you post it anywhere.");
+  } catch (err) {
+    oq.writing = false;
+    oqStatus(`Couldn't write answers: ${err.message}`, true);
+  }
+  if (state.payload === payload) renderOpenQueries(payload.insights.open_queries);
+}
+
+/** Results opened from a file (or older runs) pick up the latest pasted answers from the server. */
+async function refreshManualAnswers(payload) {
+  const items = payload.insights?.open_queries || [];
+  if (!items.some((q) => q.answer_key)) return;
+  try {
+    const res = await fetch("/api/manual-answers");
+    if (!res.ok) return;
+    const { answers = {} } = await res.json();
+    items.forEach((q) => { if (q.answer_key) q.manual_answers = answers[q.answer_key] || []; });
+    if (state.payload === payload) renderOpenQueries(items);
+  } catch { /* server unreachable: keep what the payload has */ }
 }
 
 function renderBreakdown(by) {
@@ -213,9 +409,15 @@ function renderBreakdown(by) {
 }
 
 function exportOpenQueries() {
-  const rows = state.payload?.insights?.open_queries || [];
+  const rows = (state.payload?.insights?.open_queries || []).map((q) => ({
+    ...q,
+    answers: (q.answers || []).map((a) => a.text).join("\n---\n"),
+    pasted_answers: (q.manual_answers || []).map((a) => a.text).join("\n---\n"),
+    written_answer: q.ai_answer?.answer || "",
+  }));
   download(`${fileStem()}-open-queries.csv`, "text/csv;charset=utf-8",
-    toCsv(rows, ["question", "platform", "record_type", "existing_answers", "why_open", "opportunity", "engagement_score", "published_at", "source_url"]));
+    toCsv(rows, ["question", "platform", "record_type", "existing_answers", "why_open", "opportunity", "engagement_score",
+      "published_at", "source_url", "written_answer", "answers", "pasted_answers"]));
 }
 
 function renderSummary(p) {
@@ -403,9 +605,11 @@ const RESULT_COLUMNS = ["timestamp", "platform", "record_type", "title", "conten
 // ---------------------------------------------------------------- tabs
 
 function showView() {
-  const views = ["explore", "keywords", "scan", "trends", "campaign"];
-  const view = { "#keywords": "keywords", "#scan": "scan", "#trends": "trends", "#campaign": "campaign" }[location.hash] || "explore";
+  const views = ["explore", "keywords", "scan", "trends", "campaign", "replies"];
+  const view = { "#keywords": "keywords", "#scan": "scan", "#trends": "trends", "#campaign": "campaign",
+    "#replies": "replies" }[location.hash] || "explore";
   if (view === "campaign") refreshOpenQueriesHint();
+  if (view === "replies") showReplies();
   for (const v of views) $(`${v}-view`).hidden = v !== view;
   if (view === "explore" && !routeExplore(location.hash)) {
     history.replaceState(null, "", "#searches");
@@ -433,6 +637,7 @@ function init() {
   initExplore({ onScan: scanKeyword, onPlan: startPlan });
   initTrends({ onPlan: (keyword) => startPlan({ keyword, country: "in" }) });
   initCampaign();
+  initReplies();
   $("oq-csv").addEventListener("click", exportOpenQueries);
   window.addEventListener("hashchange", showView);
   showView();

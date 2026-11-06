@@ -668,3 +668,50 @@ a.stat { text-decoration: none; display: grid; }
 .geo-grid select:disabled, .geo-grid input:disabled { opacity: .55; }
 .check[hidden] { display: none !important; } /* .check forces display with !important; hidden must still win */
 @media (max-width: 860px) { .nav-group { display: none; } } /* top bar on small screens: no room for section labels */
+
+/* Open queries: answers under each question (fetched, or pasted by hand) */
+.oq-question { min-width: 280px; }
+.answers-panel { margin-top: 6px; font-size: 13px; }
+.answers-panel summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.answers { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.answer { background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; }
+.answer-meta { font-size: 12px; }
+.answer-text { margin: 4px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16em; overflow: auto; }
+.answer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.answer-form { display: grid; gap: 6px; margin-top: 8px; }
+.answer-input {
+  font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 9px; padding: 8px 10px; width: 100%; box-sizing: border-box; resize: vertical;
+}
+
+/* Reply queue */
+.rq-top { display: grid; gap: 10px; }
+.rq-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+.rq-cap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+.rq-cap.off { color: var(--muted); }
+.rq-cap.on { background: var(--accent-soft); border-color: var(--accent); }
+.rq-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0 8px; }
+.rq-list { display: grid; gap: 12px; }
+.rq-card { display: grid; gap: 8px; }
+.rq-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.rq-question { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.rq-status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); }
+.rq-status.s-approved { background: var(--accent-soft); color: var(--accent); }
+.rq-status.s-posted { background: var(--accent); color: var(--on-accent); }
+.rq-status.s-failed { color: var(--danger, #c0392b); }
+.rq-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.rq-checks .ok::before { content: "✓ "; color: var(--accent); }
+.rq-checks .bad { color: var(--danger, #c0392b); }
+.rq-checks .bad::before { content: "✕ "; }
+.rq-log ul { margin: 4px 0 0; padding-left: 18px; }
+.rq-card.is-posted { opacity: 0.85; }
+.offscreen { position: fixed; left: -9999px; top: 0; }
+
+/* Open queries: Claude-written answer in the Answers column */
+.oq-answer-cell { min-width: 300px; max-width: 460px; }
+.oq-answer { margin: 0 0 4px; font-size: 13px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.ai-answer { border-left: 3px solid var(--accent); }
+.oq-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.error-text { color: var(--danger, #c0392b); }

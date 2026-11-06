@@ -18,7 +18,7 @@ import re
 from typing import Any
 
 from ..models import Platform, Record, SearchRequest
-from ..utils import clean_text, engagement_score, mentions_query, rank_score
+from ..utils import clean_text, engagement_score, mentions_query
 from .base import Source
 
 IG_MEDIA_FIELDS = "id,caption,media_type,permalink,like_count,comments_count,timestamp"
@@ -46,15 +46,7 @@ class _MetaSource(Source):
         return await self.http.get_json(f"{self._graph_url}/{path.lstrip('/')}", params=params, use_proxy=False)
 
     async def serp_discovery(self, request: SearchRequest) -> list[Record]:
-        result = await self.serp.search(f"site:{self.site} {request.query}", num=request.limit,
-                                        time_range=request.time_range)
-        return [
-            Record(platform=self.name, record_type="serp_discovery", source_url=o["link"],
-                   title=clean_text(o["title"], 300), content_snippet=clean_text(o["snippet"]),
-                   engagement_score=rank_score(o["position"]), published_at=o.get("date"),
-                   metrics={"rank": o["position"]})
-            for o in result.organic if self.site in o["link"]
-        ][: request.limit]
+        return await self.site_discovery(self.site, request)
 
     def _use_serp(self) -> bool:
         return self.settings.meta_serp_discovery and self.serp.configured
@@ -112,7 +104,7 @@ class InstagramSource(_MetaSource):
     def _media_record(self, m: dict[str, Any], record_type: str, label: str, author: str | None = None) -> Record:
         caption = m.get("caption") or ""
         metrics = {"likes": m.get("like_count") or 0, "comments": m.get("comments_count") or 0,
-                   "media_type": m.get("media_type")}
+                   "media_type": m.get("media_type"), "graph_id": m.get("id")}  # id: target for replies
         return Record(
             platform=self.name, record_type=record_type,
             source_url=m.get("permalink") or f"https://www.instagram.com/explore/tags/{label.lstrip('#@')}/",
@@ -157,6 +149,7 @@ class FacebookSource(_MetaSource):
                 "reactions": post.get("reactions", {}).get("summary", {}).get("total_count", 0),
                 "comments": post.get("comments", {}).get("summary", {}).get("total_count", 0),
                 "shares": post.get("shares", {}).get("count", 0),
+                "graph_id": post.get("id"),  # target for replies posted from the reply queue
             }
             page_name = (post.get("from") or {}).get("name") or page_id
             records.append(Record(

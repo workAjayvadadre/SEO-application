@@ -108,6 +108,7 @@ class QuoraSource(Source):
                    content_snippet=clean_text(a["text"]),
                    engagement_score=engagement_score({"upvotes": a["upvotes"]}, ANSWER_WEIGHTS),
                    published_at=a.get("date"), author=a.get("author"),
-                   metrics={"upvotes": a["upvotes"], "question_answer_count": qa.get("answer_count")})
+                   metrics={"upvotes": a["upvotes"], "question_answer_count": qa.get("answer_count"),
+                            "question_url": url})  # links the answer back to its question in open queries
             for a in answers
         ]

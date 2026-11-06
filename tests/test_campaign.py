@@ -155,6 +155,31 @@ def test_open_queries_rank_interest_over_existing_answers():
     assert all(q["platform"] != "google" for q in out)
 
 
+def test_open_queries_carry_fetched_answers_under_their_question():
+    recs = [
+        Record("quora", "https://www.quora.com/Is-IVF-painful", "Is IVF painful?", "", 5.0, "question"),
+        Record("quora", "https://www.quora.com/Is-IVF-painful/answer/A", "Is IVF painful?", "Mild cramps.", 2.0,
+               "answer", author="A", metrics={"upvotes": 7, "question_answer_count": 12,
+                                              "question_url": "https://www.quora.com/Is-IVF-painful"}),
+        # SERP link and API permalink differ in host and slug but are the same thread
+        Record("reddit", "https://www.reddit.com/r/IVF/comments/abc12/does_it_hurt/", "Does egg retrieval hurt?",
+               "", 4.0, "post"),
+        Record("reddit", "https://www.reddit.com/r/IVF/comments/abc12/x/c1", "r/IVF: Does egg retrieval hurt?",
+               "Sedated, felt nothing.", 1.0, "comment",
+               metrics={"score": 3, "question_url": "https://old.reddit.com/r/IVF/comments/abc12/"}),
+        Record("google", "https://google.com/search?q=ivf", "What is the IVF success rate?", "Around 30-40%.", 3.0,
+               "people_also_ask"),
+        Record("quora", "https://www.quora.com/Blocked-page", "Can IVF fail?", "", 3.0, "question"),
+    ]
+    by_q = {q["question"]: q for q in open_queries(recs)}
+    painful = by_q["Is IVF painful?"]
+    assert painful["answers"][0]["text"] == "Mild cramps." and painful["answers"][0]["votes"] == 7
+    assert painful["existing_answers"] == 12, "the page's own answer count fills a missing listing count"
+    assert by_q["Does egg retrieval hurt?"]["answers"][0]["text"] == "Sedated, felt nothing."
+    assert by_q["What is the IVF success rate?"]["answers"][0]["source"] == "Google snippet"
+    assert by_q["Can IVF fail?"]["answers"] == [] and by_q["Can IVF fail?"]["answer_key"]
+
+
 def test_google_trends_retries_after_rate_limit_then_reports_it(monkeypatch):
     from market_scraper import trends
 
