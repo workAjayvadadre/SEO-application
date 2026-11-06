@@ -85,7 +85,7 @@ class Settings:
     anthropic_api_key: str | None = None
     content_model: str = "claude-opus-5-5"
     content_effort: str = "medium"
-    brand_name: str | None = None  # institution's legal/brand name, shown on every generated piece (NMC 8.3 i)
+    brand_name: str | None = "Indira IVF"  # institution's legal/brand name, shown on every generated piece (NMC 8.3 i)
 
     # --- Reply queue: posting approved replies (each needs a human approval first) ---
     reddit_username: str | None = None  # brand account; script-app password grant (2FA must be off)
@@ -161,7 +161,7 @@ class Settings:
             anthropic_api_key=_get("ANTHROPIC_API_KEY"),
             content_model=_get("CONTENT_MODEL", "claude-opus-5-5"),
             content_effort=_get("CONTENT_EFFORT", "medium"),
-            brand_name=_get("BRAND_NAME"),
+            brand_name=_get("BRAND_NAME", "Indira IVF"),
             reddit_username=_get("REDDIT_USERNAME"),
             reddit_password=_get("REDDIT_PASSWORD"),
             youtube_oauth_client_id=_get("YOUTUBE_OAUTH_CLIENT_ID"),

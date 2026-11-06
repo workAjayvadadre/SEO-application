@@ -88,7 +88,6 @@ async function act(item, fn, busyText) {
 
 function setupBanner(d) {
   const lines = [];
-  if (!d.brand_name) lines.push("BRAND_NAME is not set in .env: replies can't be approved until the institution is named (NMC Cl. 8.3 i).");
   if (!d.drafting) lines.push("ANTHROPIC_API_KEY is not set: write replies by hand, or add the key to draft with Claude.");
   const chips = Object.entries(d.capabilities).map(([p, c]) =>
     el("span", { class: `rq-cap ${c.auto ? "on" : "off"}`, title: c.reason || "Approved replies can be posted from here" },
