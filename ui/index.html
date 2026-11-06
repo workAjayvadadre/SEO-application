@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keyword Studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Keyword Studio</span>
+      </div>
+      <nav class="modes" aria-label="Tools">
+        <span class="nav-group">Research</span>
+        <a href="#searches">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+          <span>Keyword research</span></a>
+        <a href="#scan">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M21 19H3"/></svg>
+          <span>Social listening</span></a>
+        <a href="#trends">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>
+          <span>Trends</span></a>
+        <span class="nav-group">Indira campaigns</span>
+        <a href="#campaign">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0114 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+          <span>Campaign planner</span></a>
+        <a href="#keywords">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+          <span>Keyword calendar</span></a>
+      </nav>
+      <label id="file-label" class="btn btn-ghost" title="Open a results JSON saved earlier">
+        Open results file
+        <input id="file-input" type="file" accept="application/json,.json" hidden>
+      </label>
+    </div>
+  </header>
+
+  <main class="wrap" id="explore-view" hidden>
+    <section id="ex-home" class="page">
+      <div class="page-head">
+        <h1>Searches</h1>
+        <p class="muted">Discover the questions, comparisons and phrases people search for around any topic. Every search is saved here.</p>
+      </div>
+
+      <form id="ex-form" class="card search ex-search" autocomplete="off" novalidate>
+        <div class="search-row">
+          <label class="visually-hidden" for="ex-input">Keyword</label>
+          <input id="ex-input" type="search" maxlength="100" placeholder="Enter a keyword, e.g. ivf (one or two words work best)">
+          <label class="visually-hidden" for="ex-country">Country</label>
+          <select id="ex-country" class="country">
+            <option value="in">India</option>
+            <option value="us">United States</option>
+            <option value="gb">United Kingdom</option>
+            <option value="ae">UAE</option>
+            <option value="ca">Canada</option>
+            <option value="au">Australia</option>
+            <option value="sg">Singapore</option>
+          </select>
+          <label class="visually-hidden" for="ex-language">Language</label>
+          <select id="ex-language" class="country">
+            <option value="en">English</option>
+            <option value="hi">Hindi</option>
+          </select>
+          <button id="ex-run" class="btn btn-primary" type="submit">Search</button>
+        </div>
+        <div class="ex-options">
+          <div id="ex-source" class="seg" role="radiogroup" aria-label="Search engine">
+            <button type="button" role="radio" aria-checked="true" data-source="google">Google</button>
+            <button type="button" role="radio" aria-checked="false" data-source="youtube">YouTube</button>
+          </div>
+          <label class="visually-hidden" for="ex-region">City or region</label>
+          <input id="ex-region" list="region-list" maxlength="60" placeholder="City or region (optional), e.g. Jaipur">
+          <label class="check">
+            <input id="ex-serp" type="checkbox">
+            <span>People also ask <span class="hint">(Google only, 1 Serper credit)</span></span>
+          </label>
+        </div>
+        <p id="ex-notice" class="notice" hidden></p>
+      </form>
+
+      <section id="ex-progress" class="card progress" hidden aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <div><strong>Asking autocomplete…</strong><span id="ex-progress-text" class="muted"></span></div>
+      </section>
+
+      <section class="card ex-history">
+        <div class="ex-history-head">
+          <h2>Your searches <span id="ex-history-count" class="muted"></span></h2>
+          <label class="visually-hidden" for="ex-history-filter">Filter searches</label>
+          <input id="ex-history-filter" type="search" placeholder="Filter searches…">
+        </div>
+        <div class="table-wrap">
+          <table class="ex-table">
+            <thead>
+              <tr>
+                <th scope="col">Keyword</th>
+                <th scope="col">Engine</th>
+                <th scope="col">Location</th>
+                <th scope="col">Language</th>
+                <th scope="col" class="num">Ideas</th>
+                <th scope="col">Searched</th>
+                <th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="ex-history"></tbody>
+          </table>
+        </div>
+        <p id="ex-history-empty" class="none ex-history-empty" hidden>No searches yet. Enter a keyword above to run your first search.</p>
+      </section>
+    </section>
+
+    <section id="ex-report-page" class="page" hidden>
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#searches">Searches</a><span aria-hidden="true">/</span><span id="ex-crumb"></span></nav>
+      <section id="ex-loading" class="card progress" hidden aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div><div><strong>Opening search…</strong></div>
+      </section>
+      <div id="ex-report" hidden>
+        <section class="card summary">
+          <div class="summary-head">
+            <div>
+              <h1 id="ex-title" class="ex-title"></h1>
+              <p id="ex-sub" class="muted"></p>
+            </div>
+            <div class="summary-actions">
+              <button id="ex-plan" class="btn btn-primary" type="button">Build content plan</button>
+              <button id="ex-ai" class="btn btn-ghost" type="button" title="Questions people typically ask ChatGPT, Gemini, Claude and Perplexity about this topic. Estimated by AI, not measured.">AI-assistant questions</button>
+              <button id="ex-copy" class="btn btn-ghost" type="button">Copy all</button>
+              <button id="ex-csv" class="btn btn-ghost" type="button">Download CSV</button>
+              <button id="ex-xlsx" class="btn btn-ghost" type="button" title="Same columns as an AnswerSocrates export: Type, Modifier, Question, Keyword Label, Search Volume, CPC">Excel (AnswerSocrates format)</button>
+            </div>
+          </div>
+          <div id="ex-stats" class="stat-row"></div>
+        </section>
+        <nav id="ex-jump" class="ex-jump" aria-label="Report sections"></nav>
+        <div id="ex-sections" class="ex-sections"></div>
+      </div>
+    </section>
+
+    <dialog id="ex-menu" class="item-dialog">
+      <form method="dialog">
+        <div id="ex-menu-body"></div>
+        <div class="step-actions">
+          <button id="ex-menu-copy" class="btn btn-ghost" type="button">Copy</button>
+          <button id="ex-menu-explore" class="btn btn-ghost" type="button">Search this keyword</button>
+          <button id="ex-menu-scan" class="btn btn-ghost" type="button">Market scan</button>
+          <button id="ex-menu-plan" class="btn btn-ghost" type="button">Plan content</button>
+          <button class="btn btn-primary" value="close">Close</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+
+  <main class="wrap" id="keywords-view">
+    <form id="kw-form" class="card search" autocomplete="off" novalidate>
+      <div class="step">
+        <div class="step-head"><span class="step-num">1</span><h2>What do you want to rank for?</h2></div>
+        <div class="search-row">
+          <label class="visually-hidden" for="kw-input">Seed keyword</label>
+          <input id="kw-input" type="search" maxlength="100" placeholder="Seed keyword, e.g. ivf treatment">
+          <label class="visually-hidden" for="kw-country">Country</label>
+          <select id="kw-country" class="country">
+            <option value="in">India</option>
+            <option value="us">United States</option>
+            <option value="gb">United Kingdom</option>
+            <option value="ae">UAE</option>
+            <option value="ca">Canada</option>
+            <option value="au">Australia</option>
+            <option value="sg">Singapore</option>
+          </select>
+          <button id="kw-next" class="btn btn-primary" type="submit">Next</button>
+        </div>
+      </div>
+
+      <div id="region-step" class="step" hidden>
+        <div class="step-head"><span class="step-num">2</span><h2 id="region-title">Which region in India?</h2></div>
+        <p class="card-sub muted">Adds local searches like “… in Jaipur”, “best … in Jaipur” and “… near me”.</p>
+        <div id="region-chips" class="chips" role="radiogroup" aria-label="Region"></div>
+        <div class="region-row">
+          <label class="visually-hidden" for="region-input">Any state or city</label>
+          <input id="region-input" list="region-list" maxlength="60" placeholder="Or type any state or city">
+          <datalist id="region-list"></datalist>
+        </div>
+      </div>
+
+      <div id="channel-step" class="step" hidden>
+        <div class="step-head"><span class="step-num">3</span><h2>Channels, posts per week, and month</h2></div>
+        <div id="channel-grid" class="channel-grid"></div>
+        <div class="options-grid">
+          <label>Month
+            <input id="kw-month" type="month">
+          </label>
+          <label>Suggestion language
+            <select id="kw-language">
+              <option value="en">English</option>
+              <option value="hi">Hindi</option>
+            </select>
+          </label>
+          <label class="check span-2">
+            <input id="kw-serp" type="checkbox">
+            <span>Add Google “People also ask” questions <span class="hint">(uses 1 Serper credit)</span></span>
+          </label>
+        </div>
+        <div class="step-actions">
+          <button id="kw-run" class="btn btn-primary" type="submit">Build content plan</button>
+          <button id="kw-back" class="btn btn-ghost" type="button">Change keyword</button>
+        </div>
+      </div>
+
+      <p id="kw-notice" class="notice" hidden></p>
+    </form>
+
+    <section id="kw-progress" class="card progress" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div><strong>Researching…</strong><span id="kw-progress-text" class="muted"></span></div>
+    </section>
+
+    <section id="kw-empty" class="empty">
+      <h2>Keyword research → topic wheel → monthly content calendar</h2>
+      <p>Expands your keyword through Google and YouTube autocomplete (questions, comparisons, local searches),
+        groups it into topics, and schedules it across your channels.</p>
+    </section>
+
+    <div id="kw-report" hidden>
+      <section class="card summary">
+        <div class="summary-head">
+          <div>
+            <h2 id="kw-title"></h2>
+            <p id="kw-sub" class="muted"></p>
+          </div>
+          <div class="summary-actions">
+            <button id="kw-xlsx" class="btn btn-primary" type="button">Download Excel</button>
+            <button id="kw-csv" class="btn btn-ghost" type="button">CSV</button>
+          </div>
+        </div>
+        <div id="kw-stats" class="stat-row"></div>
+      </section>
+
+      <div class="tabs subtabs" role="tablist" id="kw-tabs">
+        <button class="tab" role="tab" data-tab="calendar" aria-selected="true">Calendar</button>
+        <button class="tab" role="tab" data-tab="wheel" aria-selected="false">Topic wheel</button>
+        <button class="tab" role="tab" data-tab="keywords" aria-selected="false">Keywords</button>
+        <button class="tab" role="tab" data-tab="paa" aria-selected="false">People also ask</button>
+      </div>
+
+      <section class="card" data-panel="calendar">
+        <div class="cal-head">
+          <h3 id="cal-title"></h3>
+          <div id="cal-filters" class="chips"></div>
+        </div>
+        <p class="card-sub muted">Drag a card to another day to reschedule. Click a card for the full brief.
+          Popularity is Google's autocomplete rank, not search volume.</p>
+        <div id="cal-region" class="cal-region"></div>
+        <div id="calendar" class="calendar"></div>
+      </section>
+
+      <section class="card" data-panel="wheel" hidden>
+        <h3>Your best keywords by topic</h3>
+        <p class="card-sub muted">The eight largest topic clusters and their top keywords. Click a topic to see all its keywords.</p>
+        <div id="wheel" class="wheel"></div>
+      </section>
+
+      <section class="card" data-panel="keywords" hidden>
+        <div class="filters">
+          <label class="visually-hidden" for="kw-filter">Filter keywords</label>
+          <input id="kw-filter" type="search" placeholder="Filter keywords…">
+          <label class="visually-hidden" for="kw-group">Group</label>
+          <select id="kw-group"></select>
+          <label class="visually-hidden" for="kw-intent">Intent</label>
+          <select id="kw-intent">
+            <option value="all">All intents</option>
+            <option value="informational">Informational</option>
+            <option value="commercial">Commercial</option>
+            <option value="transactional">Transactional</option>
+            <option value="navigational">Navigational</option>
+          </select>
+          <button id="kw-copy" class="btn btn-ghost" type="button">Copy list</button>
+        </div>
+        <p id="kw-count" class="muted result-count"></p>
+        <div id="kw-groups" class="kw-groups"></div>
+      </section>
+
+      <section class="card" data-panel="paa" hidden>
+        <div id="paa"></div>
+      </section>
+    </div>
+
+    <dialog id="item-dialog" class="item-dialog">
+      <form method="dialog">
+        <div id="item-body"></div>
+        <div id="item-script" class="script-out" aria-live="polite"></div>
+        <div class="step-actions">
+          <button id="item-gen" class="btn btn-ghost btn-gen" type="button" title="What the video / blog / post must achieve and contain">Generate brief</button>
+          <button id="item-copy" class="btn btn-ghost" type="button">Copy brief</button>
+          <button id="item-scan" class="btn btn-ghost" type="button">Market-scan this keyword</button>
+          <button class="btn btn-primary" value="close">Close</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+
+  <main class="wrap" id="trends-view" hidden>
+    <div class="page-head">
+      <h1>Trends</h1>
+      <p class="muted">Google Trends for India or one state: how interest moves over time, which related searches are rising, and where interest is highest. Values are relative (100 = peak), not search counts.</p>
+    </div>
+    <form id="tr-form" class="card search" autocomplete="off">
+      <div class="form-grid">
+        <label class="span-2">Keywords <span class="hint">(up to 5, comma-separated)</span>
+          <input id="tr-keywords" type="text" maxlength="300" placeholder="ivf, iui, pcos" required>
+        </label>
+        <label>Place
+          <select id="tr-state"><option value="">All India</option></select>
+        </label>
+        <label>Period
+          <select id="tr-time">
+            <option value="day">Past 24 hours</option>
+            <option value="week">Past 7 days</option>
+            <option value="month">Past 30 days</option>
+            <option value="quarter">Past 90 days</option>
+            <option value="year" selected>Past 12 months</option>
+            <option value="5years">Past 5 years</option>
+          </select>
+        </label>
+      </div>
+      <div class="step-actions"><button id="tr-run" class="btn btn-primary">Show trends</button></div>
+      <p id="tr-notice" class="notice" hidden></p>
+    </form>
+    <div id="tr-report" hidden>
+      <section class="card">
+        <div class="summary-head">
+          <div><h2 id="tr-title"></h2><p id="tr-sub" class="muted"></p></div>
+          <div class="summary-actions"><button id="tr-csv" class="btn btn-ghost" type="button">Download CSV</button></div>
+        </div>
+        <div id="tr-summary" class="stats"></div>
+        <div id="tr-chart" class="trend-chart"></div>
+      </section>
+      <div id="tr-related" class="insights"></div>
+      <section class="card">
+        <h3>Interest by region</h3>
+        <p class="card-sub muted">States (for All India) or cities (for a state), one value per keyword.</p>
+        <div id="tr-regions"></div>
+      </section>
+    </div>
+  </main>
+
+  <main class="wrap" id="campaign-view" hidden>
+    <div class="page-head">
+      <h1>Campaign planner</h1>
+      <p class="muted">Pick a territory, a channel and a month. The planner researches the territory on the web (festivals with real local impact, language, season, cultural and health context), combines it with local search demand, and gives you a calendar with a deliverable brief for every slot. All within the NMC advertising guidelines of 6 Oct 2026.</p>
+    </div>
+    <form id="cp-form" class="card search" autocomplete="off" novalidate>
+      <div class="step">
+        <div class="step-head"><span class="step-num">1</span><h2>Territory: <span id="cp-where" class="accent-text"></span></h2></div>
+        <div class="form-grid geo-grid">
+          <label>Zone <select id="cp-zone"></select></label>
+          <label>State / UT <select id="cp-state"></select></label>
+          <label>District <select id="cp-district" disabled></select></label>
+          <label>Tehsil / taluka / mandal <select id="cp-sub" disabled></select></label>
+          <label class="span-2">Village or locality <span class="hint">(optional, needs a district)</span>
+            <input id="cp-village" type="text" maxlength="80" placeholder="Type any village, ward or locality" disabled>
+          </label>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-head"><span class="step-num">2</span><h2>Channel and month</h2></div>
+        <div class="form-grid">
+          <label>Channel <select id="cp-channel"></select></label>
+          <label>Month <input id="cp-month" type="month" required></label>
+          <label id="cp-per-week-row">Posts per week <input id="cp-per-week" type="number" min="1" max="7" value="4"></label>
+          <label>Seed keyword <input id="cp-seed" type="text" maxlength="60" value="ivf"></label>
+          <label class="span-2">Topic focus <input id="cp-topic" type="text" maxlength="80" value="IVF and fertility care"></label>
+          <label class="check span-2" id="cp-use-queries-row" hidden>
+            <input id="cp-use-queries" type="checkbox" checked> <span>Answer open queries from social listening: <span id="cp-queries-hint" class="muted"></span></span>
+          </label>
+        </div>
+      </div>
+      <div class="step-actions">
+        <button id="cp-run" class="btn btn-primary">Research and build the calendar</button>
+      </div>
+      <p class="muted small">Uses the Claude API (web search) for research and planning. Results for the same territory and month are cached for 14 days.</p>
+      <p id="cp-notice" class="notice" hidden></p>
+    </form>
+
+    <section id="cp-progress" class="card progress" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div><strong>Working…</strong> <span id="cp-progress-text" class="muted"></span></div>
+      <button id="cp-cancel" class="btn btn-ghost" type="button">Cancel</button>
+    </section>
+
+    <section id="cp-regional" class="card" hidden>
+      <h2 id="cp-reg-title"></h2>
+      <p id="cp-reg-sub" class="muted"></p>
+      <div id="cp-reg-body" class="regional-body"></div>
+    </section>
+
+    <div id="cp-result" hidden>
+      <section class="card">
+        <div class="summary-head">
+          <div><h2 id="cp-title"></h2><p id="cp-sub" class="muted"></p></div>
+          <div class="summary-actions">
+            <button id="cp-csv" class="btn btn-ghost" type="button">Download CSV</button>
+            <button id="cp-md" class="btn btn-ghost" type="button">Download briefs (.md)</button>
+          </div>
+        </div>
+        <div id="cp-strategy"></div>
+      </section>
+      <section class="card">
+        <h3>Calendar and deliverable briefs</h3>
+        <p class="card-sub muted">Each slot says what the piece must achieve and contain. Your team writes the final content.</p>
+        <div id="cp-items" class="slots"></div>
+      </section>
+      <section id="cp-ads" class="card" hidden>
+        <h3>Google Ads: weekly ad groups</h3>
+        <p class="card-sub muted">Search ads are Class B factual information. Headlines ≤ 30 characters, descriptions ≤ 90; anything too long is highlighted.</p>
+        <div id="cp-ads-body"></div>
+      </section>
+    </div>
+  </main>
+
+  <main class="wrap" id="scan-view" hidden>
+    <form id="search-form" class="card search" autocomplete="off">
+      <div class="search-row">
+        <label class="visually-hidden" for="query">Search query</label>
+        <input id="query" name="query" type="search" maxlength="200" required
+               placeholder="What do you want to research? e.g. standing desk">
+        <button id="run-btn" class="btn btn-primary" type="submit">Run search</button>
+        <button id="cancel-btn" class="btn btn-ghost" type="button" hidden>Cancel</button>
+      </div>
+
+      <fieldset class="platforms">
+        <legend>Platforms</legend>
+        <div id="platform-chips" class="chips"></div>
+      </fieldset>
+
+      <details class="options">
+        <summary>Options</summary>
+        <div class="options-grid">
+          <label>Results per platform
+            <input id="limit" type="number" min="1" max="50" value="10">
+          </label>
+          <label>Comments / answers per item
+            <input id="comments" type="number" min="0" max="50" value="10">
+          </label>
+          <label>Time range
+            <select id="scan-time">
+              <option value="">Any time</option>
+              <option value="day">Past 24 hours</option>
+              <option value="week">Past week</option>
+              <option value="month">Past month</option>
+              <option value="year">Past year</option>
+            </select>
+          </label>
+          <label class="span-2">Location <span class="hint">(optional: any state, district, city, area, tehsil / taluka or village in India)</span>
+            <input id="scan-location" type="text" list="region-list" maxlength="80" placeholder="e.g. Salt Lake Kolkata, Baramati, Nalagarh tehsil">
+          </label>
+          <label class="span-2">Instagram hashtags <span class="hint">(comma-separated; default comes from the query)</span>
+            <input id="hashtags" type="text" placeholder="skincare, skincareroutine">
+          </label>
+        </div>
+      </details>
+
+      <p id="notice" class="notice" hidden></p>
+    </form>
+
+    <section id="progress" class="card progress" hidden aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div>
+        <strong>Collecting…</strong>
+        <span id="progress-text" class="muted"></span>
+      </div>
+    </section>
+
+    <section id="empty" class="empty">
+      <h2>One query, six platforms</h2>
+      <p>Pulls search results, threads, answers, videos and comments for your query, then shows what's trending,
+        what people ask, and what they complain about.</p>
+    </section>
+
+    <div id="report" hidden>
+      <section class="card summary">
+        <div class="summary-head">
+          <div>
+            <h2 id="summary-title"></h2>
+            <p id="summary-sub" class="muted"></p>
+          </div>
+          <div class="summary-actions">
+            <button id="dl-json" class="btn btn-ghost" type="button">Download JSON</button>
+            <button id="dl-csv" class="btn btn-ghost" type="button">Download CSV</button>
+          </div>
+        </div>
+        <div id="platform-status" class="status-row"></div>
+        <ul id="platform-problems" class="problems"></ul>
+      </section>
+
+      <div class="insights">
+        <section class="card">
+          <h3>Trending topics</h3>
+          <p class="card-sub muted">Ranked by engagement and how many platforms mention them. Click a topic to filter the results.</p>
+          <div id="trending" class="bars"></div>
+        </section>
+        <section class="card">
+          <h3>Sentiment by platform</h3>
+          <p class="card-sub muted">User posts, comments, answers and videos only. Search listings aren't scored.</p>
+          <div id="sentiment"></div>
+          <div class="legend">
+            <span><i class="sw sw-pos"></i>Positive</span>
+            <span><i class="sw sw-neu"></i>Neutral</span>
+            <span><i class="sw sw-neg"></i>Negative</span>
+          </div>
+        </section>
+        <section class="card">
+          <h3>What people ask</h3>
+          <ol id="questions" class="questions"></ol>
+        </section>
+        <section class="card">
+          <h3>Pain points</h3>
+          <p class="card-sub muted">The most-engaged negative posts and comments.</p>
+          <div id="pain-points" class="pains"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="results-head">
+          <div>
+            <h3>Open queries: where we can respond</h3>
+            <p class="card-sub muted">Questions asked with interest but answered thinly (few answers, unanswered comments, Google's common questions). Ranked by engagement ÷ existing answers. Answer them with Class A education content.</p>
+          </div>
+          <div class="summary-actions">
+            <button id="oq-csv" class="btn btn-ghost" type="button">Download CSV</button>
+            <a class="btn btn-ghost" href="#campaign">Use in a campaign →</a>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="open-queries"></table></div>
+      </section>
+
+      <section class="card">
+        <h3>By platform</h3>
+        <p class="card-sub muted">What each source returned: volume, item types, average engagement, newest item and recurring themes.</p>
+        <div class="table-wrap"><table class="data-table" id="platform-breakdown"></table></div>
+      </section>
+
+      <section class="card results" id="results-section">
+        <div class="results-head">
+          <h3>All results</h3>
+          <div id="platform-tabs" class="tabs" role="tablist"></div>
+        </div>
+        <div class="filters">
+          <label class="visually-hidden" for="text-filter">Filter results</label>
+          <input id="text-filter" type="search" placeholder="Filter by text…">
+          <label class="visually-hidden" for="type-filter">Record type</label>
+          <select id="type-filter"></select>
+          <label class="visually-hidden" for="sort">Sort</label>
+          <select id="sort">
+            <option value="engagement">Most engagement</option>
+            <option value="newest">Newest</option>
+            <option value="negative">Most negative</option>
+            <option value="positive">Most positive</option>
+          </select>
+        </div>
+        <p id="result-count" class="muted result-count"></p>
+        <div id="result-list" class="result-list"></div>
+        <button id="show-more" class="btn btn-ghost show-more" type="button" hidden>Show more</button>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

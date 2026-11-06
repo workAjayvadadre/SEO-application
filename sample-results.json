@@ -1,0 +1,378 @@
+{
+  "query": "standing desk (SAMPLE DATA)",
+  "generated_at": "2026-11-03T08:00:19+00:00",
+  "duration_seconds": 0.03,
+  "total_results": 8,
+  "platforms": {
+    "google": {
+      "status": "ok",
+      "count": 3,
+      "elapsed_seconds": 0.0
+    },
+    "reddit": {
+      "status": "ok",
+      "count": 2,
+      "elapsed_seconds": 0.01
+    },
+    "quora": {
+      "status": "ok",
+      "count": 2,
+      "elapsed_seconds": 0.01
+    },
+    "youtube": {
+      "status": "ok",
+      "count": 1,
+      "elapsed_seconds": 0.01
+    },
+    "instagram": {
+      "status": "ok",
+      "count": 0,
+      "elapsed_seconds": 0.0
+    },
+    "facebook": {
+      "status": "ok",
+      "count": 0,
+      "elapsed_seconds": 0.0
+    }
+  },
+  "insights": {
+    "trending_topics": [
+      {
+        "term": "wobble",
+        "score": 33.91,
+        "mentions": 6,
+        "platforms": [
+          "google",
+          "quora",
+          "reddit",
+          "youtube"
+        ]
+      },
+      {
+        "term": "desks",
+        "score": 18.08,
+        "mentions": 4,
+        "platforms": [
+          "google",
+          "quora",
+          "reddit"
+        ]
+      },
+      {
+        "term": "desk wobble",
+        "score": 18.0,
+        "mentions": 3,
+        "platforms": [
+          "google",
+          "reddit"
+        ]
+      },
+      {
+        "term": "standing desks",
+        "score": 17.52,
+        "mentions": 3,
+        "platforms": [
+          "google",
+          "quora"
+        ]
+      },
+      {
+        "term": "motor",
+        "score": 12.98,
+        "mentions": 3,
+        "platforms": [
+          "google",
+          "quora",
+          "reddit"
+        ]
+      },
+      {
+        "term": "motor wobble",
+        "score": 9.86,
+        "mentions": 2,
+        "platforms": [
+          "quora",
+          "reddit"
+        ]
+      },
+      {
+        "term": "terrible",
+        "score": 7.55,
+        "mentions": 2,
+        "platforms": [
+          "quora",
+          "reddit"
+        ]
+      },
+      {
+        "term": "support",
+        "score": 6.57,
+        "mentions": 2,
+        "platforms": [
+          "quora",
+          "reddit"
+        ]
+      },
+      {
+        "term": "awful",
+        "score": 6.57,
+        "mentions": 2,
+        "platforms": [
+          "quora",
+          "reddit"
+        ]
+      },
+      {
+        "term": "driving",
+        "score": 6.2,
+        "mentions": 2,
+        "platforms": [
+          "reddit"
+        ]
+      },
+      {
+        "term": "crazy",
+        "score": 6.2,
+        "mentions": 2,
+        "platforms": [
+          "reddit"
+        ]
+      },
+      {
+        "term": "expensive",
+        "score": 5.95,
+        "mentions": 2,
+        "platforms": [
+          "quora"
+        ]
+      }
+    ],
+    "audience_questions": [
+      {
+        "question": "My standing desk wobble is driving me crazy?",
+        "platform": "reddit",
+        "source_url": "https://www.reddit.com/r/desks/comments/abc/x/",
+        "engagement_score": 11.096
+      },
+      {
+        "question": "Are standing desks worth it?",
+        "platform": "google",
+        "source_url": "https://b.com",
+        "engagement_score": 10.0
+      },
+      {
+        "question": "Why are standing desks so expensive?",
+        "platform": "quora",
+        "source_url": "https://www.quora.com/Why-are-standing-desks-so-expensive",
+        "engagement_score": 10.0
+      }
+    ],
+    "pain_points": [
+      {
+        "platform": "reddit",
+        "record_type": "post",
+        "title": "My standing desk wobble is driving me crazy?",
+        "content_snippet": "Terrible wobble at max height",
+        "sentiment": -0.6705,
+        "engagement_score": 11.096,
+        "source_url": "https://www.reddit.com/r/desks/comments/abc/x/"
+      },
+      {
+        "platform": "reddit",
+        "record_type": "comment",
+        "title": "r/desks: My standing desk wobble is driving me crazy?",
+        "content_snippet": "Same, motor wobble is awful and support ignored me",
+        "sentiment": -0.3818,
+        "engagement_score": 4.511,
+        "source_url": "https://www.reddit.com/r/desks/comments/abc/x/c1/"
+      },
+      {
+        "platform": "quora",
+        "record_type": "answer",
+        "title": "Why are standing desks so expensive?",
+        "content_snippet": "The motor wobble is terrible and support is awful.",
+        "sentiment": -0.5267,
+        "engagement_score": 3.714,
+        "source_url": "https://www.quora.com/Why-are-standing-desks-so-expensive"
+      }
+    ],
+    "sentiment": {
+      "overall": {
+        "scored_items": 5,
+        "average": -0.3158,
+        "positive": 0,
+        "neutral": 2,
+        "negative": 3
+      },
+      "by_platform": {
+        "google": {
+          "scored_items": 0,
+          "average": null,
+          "positive": 0,
+          "neutral": 0,
+          "negative": 0
+        },
+        "reddit": {
+          "scored_items": 2,
+          "average": -0.5262,
+          "positive": 0,
+          "neutral": 0,
+          "negative": 2
+        },
+        "quora": {
+          "scored_items": 2,
+          "average": -0.2633,
+          "positive": 0,
+          "neutral": 1,
+          "negative": 1
+        },
+        "youtube": {
+          "scored_items": 1,
+          "average": 0.0,
+          "positive": 0,
+          "neutral": 1,
+          "negative": 0
+        }
+      }
+    }
+  },
+  "results": [
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "google",
+      "source_url": "https://a.com/best",
+      "title": "Best standing desk 2026",
+      "content_snippet": "Motor noise and wobble compared",
+      "engagement_score": 10.0,
+      "record_type": "organic_result",
+      "published_at": null,
+      "author": null,
+      "metrics": {
+        "rank": 1
+      },
+      "sentiment": null,
+      "sentiment_label": null
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "google",
+      "source_url": "https://b.com",
+      "title": "Are standing desks worth it?",
+      "content_snippet": "Back pain relief",
+      "engagement_score": 10.0,
+      "record_type": "people_also_ask",
+      "published_at": null,
+      "author": null,
+      "metrics": {
+        "rank": 1
+      },
+      "sentiment": null,
+      "sentiment_label": null
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "google",
+      "source_url": "https://www.google.com/search?q=standing+desk+wobble+fix",
+      "title": "standing desk wobble fix",
+      "content_snippet": "",
+      "engagement_score": 10.0,
+      "record_type": "related_search",
+      "published_at": null,
+      "author": null,
+      "metrics": {
+        "rank": 1
+      },
+      "sentiment": null,
+      "sentiment_label": null
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "reddit",
+      "source_url": "https://www.reddit.com/r/desks/comments/abc/x/",
+      "title": "My standing desk wobble is driving me crazy?",
+      "content_snippet": "Terrible wobble at max height",
+      "engagement_score": 11.096,
+      "record_type": "post",
+      "published_at": "2023-11-14T22:13:20+00:00",
+      "author": "u1",
+      "metrics": {
+        "score": 250,
+        "num_comments": 40,
+        "upvote_ratio": null,
+        "subreddit": "desks"
+      },
+      "sentiment": -0.6705,
+      "sentiment_label": "negative"
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "reddit",
+      "source_url": "https://www.reddit.com/r/desks/comments/abc/x/c1/",
+      "title": "r/desks: My standing desk wobble is driving me crazy?",
+      "content_snippet": "Same, motor wobble is awful and support ignored me",
+      "engagement_score": 4.511,
+      "record_type": "comment",
+      "published_at": null,
+      "author": null,
+      "metrics": {
+        "score": 90,
+        "replies": 0,
+        "subreddit": "desks"
+      },
+      "sentiment": -0.3818,
+      "sentiment_label": "negative"
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "quora",
+      "source_url": "https://www.quora.com/Why-are-standing-desks-so-expensive",
+      "title": "Why are standing desks so expensive?",
+      "content_snippet": "...",
+      "engagement_score": 10.0,
+      "record_type": "question",
+      "published_at": null,
+      "author": null,
+      "metrics": {
+        "rank": 1
+      },
+      "sentiment": 0.0,
+      "sentiment_label": "neutral"
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "quora",
+      "source_url": "https://www.quora.com/Why-are-standing-desks-so-expensive",
+      "title": "Why are standing desks so expensive?",
+      "content_snippet": "The motor wobble is terrible and support is awful.",
+      "engagement_score": 3.714,
+      "record_type": "answer",
+      "published_at": null,
+      "author": null,
+      "metrics": {
+        "upvotes": 40,
+        "question_answer_count": null
+      },
+      "sentiment": -0.5267,
+      "sentiment_label": "negative"
+    },
+    {
+      "timestamp": "2026-11-03T08:00:19+00:00",
+      "platform": "youtube",
+      "source_url": "https://www.youtube.com/watch?v=v1",
+      "title": "Standing desk review",
+      "content_snippet": "Wobble test",
+      "engagement_score": 15.973,
+      "record_type": "video",
+      "published_at": null,
+      "author": "C",
+      "metrics": {
+        "views": 10000,
+        "likes": 500,
+        "comments": 30,
+        "channel": "C"
+      },
+      "sentiment": 0.0,
+      "sentiment_label": "neutral"
+    }
+  ]
+}

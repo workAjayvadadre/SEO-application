@@ -1,0 +1,17 @@
+httpx>=0.27,<1.0
+python-dotenv>=1.0
+beautifulsoup4>=4.12
+vaderSentiment>=3.3.2
+
+# Web UI (python server.py)
+fastapi>=0.110
+uvicorn>=0.29
+openpyxl>=3.1
+anthropic>=2.4,<3  # campaign planner, regional research, briefs
+truststore>=0.10  # trust the OS certificate store (corporate HTTPS inspection)
+
+# Optional: headless browser for Quora pages (PLAYWRIGHT_ENABLED=true)
+# playwright>=1.47
+
+# Dev
+pytest>=8.0
