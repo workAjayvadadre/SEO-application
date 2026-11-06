@@ -17,6 +17,7 @@ import hmac
 import re
 from typing import Any
 
+from ..http import FetchError
 from ..models import Platform, Record, SearchRequest
 from ..utils import clean_text, engagement_score, mentions_query
 from .base import Source
@@ -135,11 +136,17 @@ class FacebookSource(_MetaSource):
         return await self.settle(tasks, "facebook")
 
     async def _page_posts(self, page_id: str, request: SearchRequest) -> list[Record]:
-        data = await self.graph(
-            f"{page_id}/posts", limit=100,
-            fields="message,permalink_url,created_time,from,shares,"
-                   "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)",
-        )
+        basic = "message,permalink_url,created_time,from,shares"
+        try:
+            data = await self.graph(f"{page_id}/posts", limit=100, fields=basic + ",reactions.summary(total_count)"
+                                    ".limit(0),comments.summary(total_count).limit(0)")
+        except FetchError as exc:
+            # Reaction/comment counts need pages_read_user_content; without it, still read the posts.
+            if exc.status != 400 or "pages_read_user_content" not in (exc.body or ""):
+                raise
+            self.warnings.append("facebook: token lacks pages_read_user_content, so posts are read "
+                                 "without reaction/comment counts")
+            data = await self.graph(f"{page_id}/posts", limit=100, fields=basic)
         records = []
         for post in data.get("data", []):
             message = post.get("message") or ""
