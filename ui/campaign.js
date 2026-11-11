@@ -1,8 +1,9 @@
 // Indira campaigns > Campaign planner: territory + channel + month -> regional research -> calendar with briefs.
 
 import { $, describeError, download, el, link, slug, toCsv } from "./common.js";
+import { studioKeywords } from "./keywords.js";
 
-export const OPEN_QUERIES_KEY = "market-scraper:open-queries";
+const SOCIAL_KEY = "market-scraper:social-insights";
 const PREFS_KEY = "market-scraper:campaign";
 const CHANNELS = [
   { id: "instagram", label: "Instagram", perWeek: 4 },
@@ -29,6 +30,7 @@ export function initCampaign() {
   for (const id of ["cp-zone", "cp-state", "cp-district"]) $(id).addEventListener("change", () => cascade(id));
   for (const id of ["cp-sub", "cp-village"]) $(id).addEventListener("input", updateSummary);
   $("cp-form").addEventListener("submit", (e) => { e.preventDefault(); void run(); });
+  $("cp-use-studio").addEventListener("change", refreshSources);
   $("cp-cancel").addEventListener("click", () => st.ctrl?.abort());
   $("cp-csv").addEventListener("click", exportCsv);
   $("cp-md").addEventListener("click", exportMarkdown);
@@ -97,6 +99,7 @@ function territoryLabel(t) {
 
 function updateSummary() {
   $("cp-where").textContent = territoryLabel(territory());
+  refreshSources();
 }
 
 function loadPrefs() {
@@ -110,14 +113,67 @@ function savePrefs() {
   } catch { /* storage unavailable */ }
 }
 
-function openQueries() {
-  try { return JSON.parse(sessionStorage.getItem(OPEN_QUERIES_KEY) || "null"); } catch { return null; }
+// ---------------------------------------------------------------- data sources
+
+/** Called after every social listening run: keep what the planner needs, in localStorage so it survives a new tab. */
+export function saveSocialInsights(payload) {
+  const ins = payload?.insights || {};
+  const overall = ins.sentiment?.overall || {};
+  const text = (s, n) => String(s || "").trim().slice(0, n);
+  const saved = {
+    query: text(payload?.query, 200), run_at: text(payload?.generated_at || new Date().toISOString(), 40),
+    open_queries: (ins.open_queries || []).map((q) => text(q.question, 300)).filter(Boolean).slice(0, 60),
+    pain_points: (ins.pain_points || []).map((p) => text(p.content_snippet || p.title, 300)).filter(Boolean).slice(0, 20),
+    trending_topics: (ins.trending_topics || []).map((t) => text(t.term, 60)).filter(Boolean).slice(0, 20),
+    sentiment: { average: typeof overall.average === "number" ? Math.max(-1, Math.min(1, overall.average)) : null,
+                 positive: overall.positive || 0, neutral: overall.neutral || 0, negative: overall.negative || 0 },
+  };
+  if (!saved.query) return;
+  try { localStorage.setItem(SOCIAL_KEY, JSON.stringify(saved)); } catch { /* storage unavailable */ }
 }
 
-export function refreshOpenQueriesHint() {
-  const q = openQueries();
-  $("cp-use-queries-row").hidden = !q?.questions?.length;
-  if (q?.questions?.length) $("cp-queries-hint").textContent = `${q.questions.length} open questions from your “${q.query}” social listening run`;
+function socialInsights() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SOCIAL_KEY) || "null");
+    return s?.query && (s.open_queries?.length || s.pain_points?.length || s.trending_topics?.length) ? s : null;
+  } catch { return null; }
+}
+
+function ago(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "date unknown";
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return mins <= 1 ? "just now" : `${mins} minutes ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+// The Studio search was for one free-text place; warn when it isn't part of the campaign territory.
+function studioMismatch(studio, t) {
+  const places = [t.village, t.subdistrict, t.district, t.state].filter(Boolean).map((p) => p.toLowerCase());
+  if (!studio.region) return places.length ? `The Keyword Studio search was for all of India, not ${territoryLabel(t)}.` : "";
+  return places.includes(studio.region.toLowerCase()) ? ""
+    : `The Keyword Studio search was for ${studio.region}, not ${territoryLabel(t)}. Untick it to search this territory instead.`;
+}
+
+export function refreshSources() {
+  const studio = studioKeywords();
+  $("cp-use-studio-row").hidden = !studio;
+  $("cp-studio-off").hidden = !!studio;
+  const warn = studio ? studioMismatch(studio, territory()) : "";
+  $("cp-studio-warn").textContent = warn;
+  $("cp-studio-warn").hidden = !warn || !$("cp-use-studio").checked;
+  if (studio) {
+    $("cp-studio-hint").textContent = `${studio.keywords.length} keywords for “${studio.seed}”${studio.region ? ` in ${studio.region}` : ""}, ${ago(studio.run_at)}`;
+  }
+  const s = socialInsights();
+  $("cp-use-social-row").hidden = !s;
+  $("cp-social-off").hidden = !!s;
+  if (s) {
+    $("cp-social-hint").textContent = `from “${s.query}” run, ${ago(s.run_at)} · ${s.open_queries.length} questions, ${s.pain_points.length} pain points, ${s.trending_topics.length} topics`;
+  }
 }
 
 function note(text) {
@@ -151,11 +207,17 @@ async function run() {
     st.regional = await post("/api/regional", base);
     renderRegional(st.regional);
     busy(true, "Building the calendar and a deliverable brief for every slot… usually 1–3 minutes.");
-    const q = $("cp-use-queries").checked ? openQueries()?.questions || [] : [];
+    const studio = $("cp-use-studio").checked ? studioKeywords() : null;
+    const social = $("cp-use-social").checked ? socialInsights() : null;
     st.result = await post("/api/campaign", {
       ...base, channel, per_week: Number($("cp-per-week").value) || 3,
       topic: $("cp-topic").value.trim() || "IVF and fertility care", seed: $("cp-seed").value.trim() || "ivf",
-      questions: q.slice(0, 60),
+      keywords: studio ? studio.keywords.slice(0, 300) : [],
+      social: social ? {
+        query: social.query, run_at: social.run_at, sentiment: social.sentiment,
+        open_queries: social.open_queries.slice(0, 60), pain_points: social.pain_points.slice(0, 20),
+        trending_topics: social.trending_topics.slice(0, 20),
+      } : null,
     });
     renderCampaign(st.result);
   } catch (err) {
@@ -214,10 +276,12 @@ function renderCampaign(r) {
   const p = r.plan;
   $("cp-result").hidden = false;
   $("cp-title").textContent = `${r.channel_label} · ${r.territory.label} · ${monthName(r.month)}`;
-  $("cp-sub").textContent = `${p.items.length} slots${p.ad_groups.length ? ` · ${p.ad_groups.length} ad groups` : ""} · built from ${r.keyword_count} local keywords and regional research`;
+  $("cp-sub").textContent = `${p.items.length} slots${p.ad_groups.length ? ` · ${p.ad_groups.length} ad groups` : ""} · built from keyword research, Google Trends, social listening and regional research`;
+  $("cp-data-used").textContent = dataUsedLine(r.data_used);
   const s = p.strategy;
   const checks = [...r.auto_check.map((h) => `“${h.match}”: ${h.issue} (Cl. ${h.clause}). ${h.context}`),
-                  ...r.ads_check.map((a) => `${a.where}: ${a.issue}: “${a.text}”`)];
+                  ...r.ads_check.map((a) => `${a.where}: ${a.issue}: “${a.text}”`),
+                  ...(r.source_check || []).map((c) => c.where === "Plan" ? c.issue : `${c.where}: ${c.issue}${c.text ? `: “${c.text}”` : ""}`)];
   $("cp-strategy").replaceChildren(
     checks.length ? el("div", { class: "nmc-warn" }, el("strong", {}, "Fix before using:"), el("ul", {}, ...checks.map((c) => el("li", {}, c)))) : "",
     el("dl", { class: "brief" },
@@ -239,8 +303,31 @@ function renderCampaign(r) {
       el("p", {}, el("strong", {}, "Descriptions:")),
       el("ul", { class: "ad-copy" }, ...g.descriptions.map((d) => el("li", { class: d.length > 90 ? "too-long" : "" }, d, el("span", { class: "muted small" }, ` ${d.length}/90`)))),
       el("p", {}, el("strong", {}, "Landing page: "), g.landing_page_brief),
+      builtFromLine(g.built_from),
       el("p", { class: "muted" }, g.nmc_notes))));
   }
+}
+
+function dataUsedLine(d) {
+  if (!d) return "";
+  const parts = [
+    `Data used: ${d.keywords} keywords (${d.keyword_origin === "studio" ? "Keyword Studio" : "automatic search"})`,
+    d.trends ? `Google Trends for ${d.trends} keywords${d.trends_geo ? ` (${d.trends_geo})` : ""}` : `no Google Trends (${d.trends_error || "no data"})`,
+    d.social_run ? `social listening “${d.social_run}”: ${d.social_questions} questions, ${d.pain_points} pain points, ${d.trending_topics} topics`
+      : "no social listening",
+  ];
+  return parts.join(" · ");
+}
+
+function builtFrom(b) {
+  if (!b) return "";
+  return [b.keyword_source && `keyword “${b.keyword_source}”`, b.trend_signal && `trend: ${b.trend_signal}`,
+          b.social_insight && `social: ${b.social_insight}`].filter(Boolean).join(" · ");
+}
+
+function builtFromLine(b) {
+  const text = builtFrom(b);
+  return el("p", { class: "muted small" }, el("strong", {}, "Built from: "), text || "no keyword, trend or social data (greeting or unsupported slot)");
 }
 
 function slotCard(it, i) {
@@ -255,7 +342,8 @@ function slotCard(it, i) {
     el("div", { class: "slot-body" },
       el("p", {}, el("strong", {}, "Why now: "), it.why_now),
       el("p", {}, el("strong", {}, "Regional hook: "), it.regional_hook),
-      el("p", {}, el("strong", {}, "Target keyword: "), it.target_keyword, " · ", el("strong", {}, "Language: "), it.language),
+      el("p", {}, el("strong", {}, "Target keyword: "), it.target_keyword || "none", " · ", el("strong", {}, "Language: "), it.language),
+      builtFromLine(it.built_from),
       el("p", {}, el("strong", {}, "Objective: "), d.objective),
       el("div", { class: "two-col" },
         el("div", {}, ...list("Key messages", d.key_messages), ...list("Questions to answer", d.questions_to_answer)),
@@ -282,6 +370,8 @@ function exportCsv() {
     must_include: it.deliverable.must_include.join(" | "), avoid: it.deliverable.avoid.join(" | "),
     visual_direction: it.deliverable.visual_direction, allowed_cta: it.deliverable.allowed_cta,
     kpis: it.deliverable.kpis.join(" | "),
+    built_from_keyword: it.built_from?.keyword_source || "", built_from_trend: it.built_from?.trend_signal || "",
+    built_from_social: it.built_from?.social_insight || "",
   }));
   download(`${fileStem(r)}.csv`, "text/csv;charset=utf-8", toCsv(rows, Object.keys(rows[0] || { date: 1 })));
 }
@@ -292,7 +382,8 @@ function exportMarkdown() {
   const p = r.plan, s = p.strategy, b = st.regional?.brief;
   const L = [`# ${r.channel_label} campaign · ${r.territory.label} · ${monthName(r.month)}`, "",
     `**Objective:** ${s.objective}`, `**Audience:** ${s.audience}`, `**Regional hook:** ${s.regional_hook}`,
-    `**Language:** ${s.language_plan}`, `**Tone:** ${s.tone}`, `**Key themes:** ${s.key_themes.join(", ")}`, ""];
+    `**Language:** ${s.language_plan}`, `**Tone:** ${s.tone}`, `**Key themes:** ${s.key_themes.join(", ")}`, "",
+    dataUsedLine(r.data_used), ""];
   if (b) {
     L.push("## Regional calendar", "", "| Date | Event | Impact | Content angle |", "|---|---|---|---|",
       ...b.events.map((e) => `| ${e.date}${e.verify ? " (verify)" : ""} | ${e.name} | ${e.impact} | ${e.content_angle.replace(/\|/g, "/")} |`), "");
@@ -301,7 +392,8 @@ function exportMarkdown() {
   for (const it of p.items) {
     const d = it.deliverable;
     L.push(`### ${it.date} · ${it.format} · ${it.title} (Class ${it.nmc_class})`, "",
-      `- Why now: ${it.why_now}`, `- Regional hook: ${it.regional_hook}`, `- Target keyword: ${it.target_keyword}`,
+      `- Why now: ${it.why_now}`, `- Regional hook: ${it.regional_hook}`, `- Target keyword: ${it.target_keyword || "none"}`,
+      `- Built from: ${builtFrom(it.built_from) || "none"}`,
       `- Language: ${it.language}`, `- Objective: ${d.objective}`, "",
       "**Key messages**", ...d.key_messages.map((x) => `- ${x}`), "", "**Questions to answer**", ...d.questions_to_answer.map((x) => `- ${x}`), "",
       "**Outline**", ...d.outline.map((x, i) => `${i + 1}. ${x}`), "", "**Must include**", ...d.must_include.map((x) => `- ${x}`), "",
@@ -310,7 +402,7 @@ function exportMarkdown() {
   }
   for (const g of p.ad_groups) {
     L.push(`## Week ${g.week} ad group: ${g.name}`, "", `Keywords: ${g.keywords.join(", ")}`, `Negatives: ${g.negative_keywords.join(", ")}`,
-      `Geo: ${g.geo_targets.join(", ")} · Schedule: ${g.schedule}`, "", "Headlines:", ...g.headlines.map((h) => `- ${h}`), "",
+      `Geo: ${g.geo_targets.join(", ")} · Schedule: ${g.schedule}`, `Built from: ${builtFrom(g.built_from) || "none"}`, "", "Headlines:", ...g.headlines.map((h) => `- ${h}`), "",
       "Descriptions:", ...g.descriptions.map((x) => `- ${x}`), "", `Landing page: ${g.landing_page_brief}`, "");
   }
   L.push("---", "AI-assisted plan. Verify lunar dates, statistics and any [PLACEHOLDER] before use; get compliance sign-off. Not legal advice or NMC approval.");

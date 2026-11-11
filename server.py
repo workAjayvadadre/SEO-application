@@ -34,7 +34,7 @@ from market_scraper.export import keywords_to_answersocrates_xlsx, plan_to_xlsx
 from market_scraper.keywords import KeywordEngine, KeywordRequest
 from market_scraper.planner import CHANNELS, DEFAULT_CADENCE, build_calendar
 from market_scraper.aiquestions import ai_assistant_questions
-from market_scraper.campaign import CAMPAIGN_CHANNELS, build_campaign
+from market_scraper.campaign import CAMPAIGN_CHANNELS, build_campaign, campaign_trends
 from market_scraper.geo import TerritoryError, territory_from
 from market_scraper.regional import resolve_place
 from market_scraper.regional_research import regional_brief
@@ -169,12 +169,51 @@ class RegionalBody(BaseModel):
     refresh: bool = False
 
 
+class StudioKeyword(BaseModel):
+    """One Keyword Studio row, reduced to what the planner reads."""
+    keyword: str = Field(min_length=1, max_length=120)
+    label: str = Field("", max_length=30)
+    intent: str = Field("", max_length=30)
+    group: str = Field("", max_length=30)
+    brand: Literal["own", "competitor"] | None = None
+    position: int = Field(99, ge=0, le=999)
+
+
+class SocialSentiment(BaseModel):
+    average: float | None = Field(None, ge=-1, le=1)
+    positive: int = Field(0, ge=0, le=1_000_000)
+    neutral: int = Field(0, ge=0, le=1_000_000)
+    negative: int = Field(0, ge=0, le=1_000_000)
+
+
+class SocialInsights(BaseModel):
+    """What one social listening run found, as the browser saved it."""
+    query: str = Field(min_length=1, max_length=200)
+    run_at: str = Field("", max_length=40)
+    open_queries: list[str] = Field(default_factory=list, max_length=60)
+    pain_points: list[str] = Field(default_factory=list, max_length=20)
+    trending_topics: list[str] = Field(default_factory=list, max_length=20)
+    sentiment: SocialSentiment | None = None
+
+    @field_validator("open_queries", "pain_points")
+    @classmethod
+    def _short_texts(cls, value: list[str]) -> list[str]:
+        return [t.strip()[:300] for t in value if t.strip()]
+
+    @field_validator("trending_topics")
+    @classmethod
+    def _short_topics(cls, value: list[str]) -> list[str]:
+        return [t.strip()[:60] for t in value if t.strip()]
+
+
 class CampaignBody(RegionalBody):
     channel: Literal["instagram", "youtube", "facebook", "blog", "gbp", "google_ads"]
     per_week: int = Field(3, ge=1, le=7)
     topic: str = Field("IVF and fertility care", min_length=2, max_length=80)
     seed: str = Field("ivf", min_length=2, max_length=60)
-    questions: list[str] = Field(default_factory=list, max_length=60)
+    questions: list[str] = Field(default_factory=list, max_length=60)  # older clients; social replaces it
+    keywords: list[StudioKeyword] = Field(default_factory=list, max_length=300)  # Keyword Studio results
+    social: SocialInsights | None = None
 
     @field_validator("questions")
     @classmethod
@@ -449,28 +488,38 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
 
     @app.post("/api/campaign")
     async def campaign(body: CampaignBody) -> dict:
-        """Regional research (cached) + local keyword research + Claude plan with a brief per slot."""
+        """Regional research (cached) + keywords (Studio or a fresh search) + Google Trends + social listening
+        -> Claude plan with a brief per slot. Trends and social listening are optional; a plan is never refused
+        because one of them is missing."""
         territory = _territory(body.territory)
         try:
             regional_result = await regional_brief(settings, territory, body.month, tuple(body.channels))
         except ScriptGenError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        place = territory.subdistrict or territory.district or territory.state
-        source = "youtube" if body.channel == "youtube" else "google"
-        async with searches:
-            try:
-                research = await KeywordEngine(settings, transport=transport).run(KeywordRequest(
-                    keyword=body.seed, source=source, country="in", language="en",
-                    region=place if place and re.match(r"^[A-Za-z][A-Za-z0-9 .&'-]*$", place) else None))
-            except (ValueError, FetchError) as exc:
-                research = {"keywords": [], "warnings": [str(exc)]}
+        if body.keywords:
+            keywords, origin = [k.model_dump() for k in body.keywords], "studio"
+        else:
+            origin = "auto"
+            place = territory.subdistrict or territory.district or territory.state
+            source = "youtube" if body.channel == "youtube" else "google"
+            async with searches:
+                try:
+                    research = await KeywordEngine(settings, transport=transport).run(KeywordRequest(
+                        keyword=body.seed, source=source, country="in", language="en",
+                        region=place if place and re.match(r"^[A-Za-z][A-Za-z0-9 .&'-]*$", place) else None))
+                except (ValueError, FetchError) as exc:
+                    research = {"keywords": [], "warnings": [str(exc)]}
+            keywords = research.get("keywords", [])
+        trends_result, trends_error = await campaign_trends(keywords, territory.state, body.seed, transport=transport)
         try:
             result = await build_campaign(settings, territory, body.month, body.channel, body.per_week,
-                                          regional_result, research.get("keywords", []), body.questions, body.topic)
+                                          regional_result, keywords, body.questions, body.topic,
+                                          keyword_origin=origin, trends=trends_result, trends_error=trends_error,
+                                          social=body.social.model_dump() if body.social else None)
         except ScriptGenError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         result["regional"] = regional_result
-        result["keyword_count"] = len(research.get("keywords", []))
+        result["keyword_count"] = len(keywords)
         return result
 
     @app.post("/api/plan/xlsx")

@@ -4,7 +4,7 @@
 import { $, LABELS, describeError, dot, download, el, label, link, slug, toCsv } from "./common.js";
 import { initExplore, routeExplore } from "./explore.js";
 import { initKeywords, startPlan } from "./keywords.js";
-import { OPEN_QUERIES_KEY, initCampaign, refreshOpenQueriesHint } from "./campaign.js";
+import { initCampaign, refreshSources, saveSocialInsights } from "./campaign.js";
 import { initTrends } from "./trends.js";
 import { addToReplyQueue, initReplies, showReplies } from "./replies.js";
 
@@ -186,14 +186,10 @@ function showReport(payload) {
   renderQuestions(payload.insights?.audience_questions || []);
   renderPainPoints(payload.insights?.pain_points || []);
   renderOpenQueries(payload.insights?.open_queries || []);
-  refreshManualAnswers(payload).then(() => writeAnswers(payload));
+  refreshManualAnswers(payload).then(() => loadAnswers(payload));  // saved replies only; Claude writes on request
   renderBreakdown(payload.insights?.platform_breakdown || {});
   renderResults();
-  try {
-    sessionStorage.setItem(OPEN_QUERIES_KEY, JSON.stringify({
-      query: payload.query, questions: (payload.insights?.open_queries || []).map((q) => q.question),
-    }));
-  } catch { /* storage unavailable */ }
+  saveSocialInsights(payload);
 }
 
 // ------------------------------------------------------------ open queries + answers
@@ -271,6 +267,9 @@ function answersPanel(q, open) {
         onclick: () => saveManualAnswers(q, manual.filter((_, j) => j !== i).map((m) => m.text), status) }, "Remove")])));
 
   let written = null;
+  if (!q.ai_answer?.answer && oq.writer) {
+    written = el("div", { class: "answer-actions" }, generateButton(q, "Generate reply with Claude"));
+  }
   if (q.ai_answer?.answer) {
     const useBtn = el("button", { type: "button", class: "btn btn-primary btn-sm", onclick: async () => {
       status.textContent = "Adding…";
@@ -281,7 +280,8 @@ function answersPanel(q, open) {
       el("div", { class: "answer-meta muted" }, "Written by Claude · review before posting"),
       el("p", { class: "answer-text" }, q.ai_answer.answer),
       flags.length ? el("p", { class: "notice error" }, `NMC check: ${flags.map((f) => `"${f.match}" (${f.issue})`).join("; ")}. Edit before use.`) : null,
-      el("div", { class: "answer-actions" }, copyButton(q.ai_answer.answer), useBtn));
+      el("div", { class: "answer-actions" }, copyButton(q.ai_answer.answer), useBtn,
+        oq.writer ? generateButton(q, "Regenerate", true) : null));
   }
 
   let notice = null;
@@ -304,7 +304,7 @@ function answersPanel(q, open) {
 
   const total = fetched.length + manual.length;
   let summary = "Answers: none yet, add one";
-  if (written) summary = total ? `Written answer + ${total} more` : "Written answer & options";
+  if (q.ai_answer?.answer) summary = total ? `Written answer + ${total} more` : "Written answer & options";
   else if (total) summary = `Answers (${total})`;
   return el("details", { class: "answers-panel", open: open || null },
     el("summary", {}, summary),
@@ -320,13 +320,17 @@ function renderOpenQueries(items, openKey = null) {
     const pasted = (q.manual_answers || []).length;
     const counts = [read ? `${read} shown` : null, pasted ? `${pasted} pasted` : null].filter(Boolean).join(" · ");
     let answerCell;
-    if (q.ai_answer?.answer) {
+    if (oq.pending.has(q.answer_key)) {
+      answerCell = el("div", {}, el("span", { class: "muted hint" }, "Writing…"));
+    } else if (q.ai_answer?.answer) {
       answerCell = el("div", {}, el("p", { class: "oq-answer" }, q.ai_answer.answer),
         el("div", { class: "muted hint" }, ["Written by Claude", q.existing_answers != null ? `${q.existing_answers} on the site` : null, counts]
-          .filter(Boolean).join(" · ")));
+          .filter(Boolean).join(" · ")),
+        el("div", { class: "answer-actions" }, copyButton(q.ai_answer.answer)));
     } else {
-      answerCell = el("div", {}, oq.writing ? el("span", { class: "muted hint" }, "Writing…") : (q.existing_answers ?? "–"),
-        counts ? el("div", { class: "muted hint" }, counts) : null);
+      answerCell = el("div", {}, q.existing_answers ?? "–",
+        counts ? el("div", { class: "muted hint" }, counts) : null,
+        oq.writer ? el("div", { class: "answer-actions" }, generateButton(q, "Generate reply")) : null);
     }
     return el("tr", {},
       el("td", { class: "oq-question" }, link(q.source_url, q.question), answersPanel(q, openKey && q.answer_key === openKey)),
@@ -338,7 +342,9 @@ function renderOpenQueries(items, openKey = null) {
     : [el("tr", {}, el("td", { colspan: 5, class: "none" }, "No open questions found in these results."))])));
 }
 
-const oq = { writing: false };
+// Claude writes replies only when asked: the batch button above the table or a question's own button.
+const oq = { writer: false, pending: new Set() };
+const OQ_LIMIT = 30;
 
 function oqStatus(text, isError = false) {
   let box = $("oq-status");
@@ -346,44 +352,82 @@ function oqStatus(text, isError = false) {
     box = el("div", { id: "oq-status", class: "oq-status" });
     $("open-queries").closest(".table-wrap").before(box);
   }
-  const rewrite = el("button", { type: "button", class: "btn btn-ghost btn-sm",
-    onclick: () => writeAnswers(state.payload, { refresh: true }) }, "Rewrite all answers");
-  box.replaceChildren(el("span", { class: `hint ${isError ? "error-text" : "muted"}` }, text),
-    oq.writing || !state.payload?.insights?.open_queries?.length ? null : rewrite);
+  const items = (state.payload?.insights?.open_queries || []).slice(0, OQ_LIMIT);
+  const missing = items.filter((q) => !q.ai_answer?.answer);
+  let action = null;
+  if (oq.writer && items.length && !oq.pending.size) {
+    action = missing.length
+      ? el("button", { type: "button", class: "btn btn-primary btn-sm",
+        onclick: () => generateAnswers(state.payload, missing) }, `Generate replies (${missing.length})`)
+      : el("button", { type: "button", class: "btn btn-ghost btn-sm",
+        onclick: () => generateAnswers(state.payload, items, { refresh: true }) }, "Rewrite all replies");
+  }
+  box.replaceChildren(el("span", { class: `hint ${isError ? "error-text" : "muted"}` }, text), action);
 }
 
-/** Fill the Answers column: cached answers first, then Claude writes the missing ones in one batch. */
-async function writeAnswers(payload, { refresh = false } = {}) {
-  const items = (payload.insights?.open_queries || []).slice(0, 30);
-  if (!items.length || oq.writing) return;
-  const body = (generate) => JSON.stringify({ generate, refresh, items: items.map((q) => ({
-    question: q.question, source_url: q.source_url, platform: q.platform,
-    context: [...(q.answers || []), ...(q.manual_answers || [])].map((a) => a.text).slice(0, 5) })) });
-  const merge = (answers) => items.forEach((q) => { if (answers[q.answer_key]) q.ai_answer = answers[q.answer_key]; });
-  const post = async (generate) => {
-    const res = await fetch("/api/open-answers", { method: "POST", headers: { "Content-Type": "application/json" }, body: body(generate) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(describeError(data.detail) || `HTTP ${res.status}`);
-    return data;
-  };
+function generateButton(q, text, refresh = false) {
+  return el("button", { type: "button", class: refresh ? "btn btn-ghost btn-sm" : "btn btn-primary btn-sm",
+    disabled: oq.pending.size ? true : null,
+    onclick: () => generateAnswers(state.payload, [q], { refresh }) }, text);
+}
+
+async function postOpenAnswers(items, generate, refresh = false) {
+  const res = await fetch("/api/open-answers", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ generate, refresh, items: items.map((q) => ({
+      question: q.question, source_url: q.source_url, platform: q.platform,
+      context: [...(q.answers || []), ...(q.manual_answers || [])].map((a) => a.text).slice(0, 5) })) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(describeError(data.detail) || `HTTP ${res.status}`);
+  return data;
+}
+
+function mergeAnswers(items, answers) {
+  items.forEach((q) => { if (answers[q.answer_key]) q.ai_answer = answers[q.answer_key]; });
+}
+
+function idleStatus(items) {
+  const missing = items.filter((q) => !q.ai_answer?.answer).length;
+  if (!oq.writer) return "Add ANTHROPIC_API_KEY to .env to generate replies with Claude.";
+  if (!missing) return "Replies written by Claude: review each one before you post it anywhere.";
+  return `${missing} of ${items.length} questions have no reply yet. Generate them all, or one at a time from each row.`;
+}
+
+/** After a run: show replies Claude already wrote for these questions. Never calls Claude. */
+async function loadAnswers(payload) {
+  const items = (payload.insights?.open_queries || []).slice(0, OQ_LIMIT);
+  if (!items.length) return;
   try {
-    const cached = await post(false);
-    merge(cached.answers || {});
-    const missing = refresh || items.some((q) => !q.ai_answer);
-    if (!missing) { oqStatus("Answers written by Claude: review each one before you post it anywhere."); return; }
-    if (!cached.writer) { oqStatus("Add ANTHROPIC_API_KEY to .env to have Claude write an answer for every question."); return; }
-    oq.writing = true;
-    oqStatus(`Claude is writing answers for ${items.length} questions… (about a minute)`);
-    if (state.payload === payload) renderOpenQueries(payload.insights.open_queries);
-    const fresh = await post(true);
-    merge(fresh.answers || {});
-    oq.writing = false;
-    oqStatus("Answers written by Claude: review each one before you post it anywhere.");
+    const cached = await postOpenAnswers(items, false);
+    oq.writer = !!cached.writer;
+    mergeAnswers(items, cached.answers || {});
+    if (state.payload !== payload) return;
+    oqStatus(idleStatus(items));
   } catch (err) {
-    oq.writing = false;
-    oqStatus(`Couldn't write answers: ${err.message}`, true);
+    if (state.payload === payload) oqStatus(`Couldn't load saved replies: ${err.message}`, true);
   }
   if (state.payload === payload) renderOpenQueries(payload.insights.open_queries);
+}
+
+/** On request: Claude writes replies for the given questions (all of them again with refresh). */
+async function generateAnswers(payload, items, { refresh = false } = {}) {
+  if (!payload || !items.length || oq.pending.size) return;
+  items.forEach((q) => oq.pending.add(q.answer_key));
+  oqStatus(items.length === 1 ? "Claude is writing a reply…"
+    : `Claude is writing replies for ${items.length} questions… (about a minute)`);
+  renderOpenQueries(payload.insights.open_queries);
+  let error = null;
+  try {
+    mergeAnswers(items, (await postOpenAnswers(items, true, refresh)).answers || {});
+  } catch (err) {
+    error = err.message;
+  }
+  oq.pending.clear();
+  if (state.payload !== payload) return;
+  const all = payload.insights.open_queries.slice(0, OQ_LIMIT);
+  oqStatus(error ? `Couldn't write replies: ${error}` : idleStatus(all), !!error);
+  renderOpenQueries(payload.insights.open_queries, items.length === 1 ? items[0].answer_key : null);
 }
 
 /** Results opened from a file (or older runs) pick up the latest pasted answers from the server. */
@@ -608,7 +652,7 @@ function showView() {
   const views = ["explore", "keywords", "scan", "trends", "campaign", "replies"];
   const view = { "#keywords": "keywords", "#scan": "scan", "#trends": "trends", "#campaign": "campaign",
     "#replies": "replies" }[location.hash] || "explore";
-  if (view === "campaign") refreshOpenQueriesHint();
+  if (view === "campaign") refreshSources();
   if (view === "replies") showReplies();
   for (const v of views) $(`${v}-view`).hidden = v !== view;
   if (view === "explore" && !routeExplore(location.hash)) {

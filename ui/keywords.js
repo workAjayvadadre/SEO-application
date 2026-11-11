@@ -247,6 +247,7 @@ async function runPlan() {
     const data = await res.json();
     data.plan.items.forEach((item, i) => { item.id = i; });
     st.data = data;
+    saveStudioKeywords(data.research);
     st.hiddenChannels.clear();
     st.kwFilter = { text: "", group: "all", intent: "all", topic: null };
     $("kw-filter").value = "";
@@ -276,6 +277,37 @@ function setBusy(busy, keyword = "", region = null) {
 }
 
 // ---------------------------------------------------------------- report
+
+// ---------------------------------------------------------------- shared with the Campaign planner
+
+const STUDIO_KEY = "market-scraper:studio-keywords";
+const STUDIO_MAX = 300;
+let lastStudio = null;
+
+// Local terms first, then Google's own ranking; rival brands never leave this tab.
+function saveStudioKeywords(research) {
+  const isLocal = (k) => k.group === "local" || k.label === "Local" || k.label === "Location";
+  const usable = (research?.keywords || []).filter((k) => k.keyword && k.brand !== "competitor");
+  const rest = usable.filter((k) => !isLocal(k)).sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+  lastStudio = {
+    seed: research.keyword, region: research.region || null, run_at: new Date().toISOString(),
+    keywords: [...usable.filter(isLocal), ...rest].slice(0, STUDIO_MAX).map((k) => ({
+      keyword: String(k.keyword).slice(0, 120), label: String(k.label || "").slice(0, 30),
+      intent: String(k.intent || "").slice(0, 30), group: String(k.group || "").slice(0, 30),
+      brand: k.brand === "own" ? "own" : null, position: Math.min(Math.max(Number(k.position) || 99, 0), 999),
+    })),
+  };
+  try { localStorage.setItem(STUDIO_KEY, JSON.stringify(lastStudio)); } catch { /* storage unavailable */ }
+}
+
+/** Latest Keyword Studio results ({seed, region, run_at, keywords}) or null. */
+export function studioKeywords() {
+  if (lastStudio) return lastStudio;
+  try {
+    const saved = JSON.parse(localStorage.getItem(STUDIO_KEY) || "null");
+    return Array.isArray(saved?.keywords) && saved.keywords.length ? saved : null;
+  } catch { return null; }
+}
 
 function monthName(month) {
   const [y, m] = month.split("-").map(Number);

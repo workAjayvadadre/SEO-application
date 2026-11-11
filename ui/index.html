@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Keyword Studio</title>
-  <link rel="stylesheet" href="/static/styles.css?v=5">
-  <script type="module" src="/static/app.js?v=5"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=6">
+  <script type="module" src="/static/app.js?v=7"></script>
 </head>
 <body>
   <header class="topbar">
@@ -403,9 +403,21 @@
           <label id="cp-per-week-row">Posts per week <input id="cp-per-week" type="number" min="1" max="7" value="4"></label>
           <label>Seed keyword <input id="cp-seed" type="text" maxlength="60" value="ivf"></label>
           <label class="span-2">Topic focus <input id="cp-topic" type="text" maxlength="80" value="IVF and fertility care"></label>
-          <label class="check span-2" id="cp-use-queries-row" hidden>
-            <input id="cp-use-queries" type="checkbox" checked> <span>Answer open queries from social listening: <span id="cp-queries-hint" class="muted"></span></span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-head"><span class="step-num">3</span><h2>Data sources</h2></div>
+        <div class="form-grid">
+          <label class="check span-2" id="cp-use-studio-row" hidden>
+            <input id="cp-use-studio" type="checkbox" checked> <span>Keywords from Keyword Studio: <span id="cp-studio-hint" class="muted"></span></span>
           </label>
+          <p class="muted small span-2" id="cp-studio-off">Keywords: a fresh search for the seed keyword in this territory (run a Keyword Studio search to use your own list).</p>
+          <p class="notice span-2" id="cp-studio-warn" hidden></p>
+          <p class="muted small span-2">Google Trends: the top 5 keywords in the territory's state (or India), last 3 months. Skipped with a warning if Trends has no data.</p>
+          <label class="check span-2" id="cp-use-social-row" hidden>
+            <input id="cp-use-social" type="checkbox" checked> <span>Social listening: <span id="cp-social-hint" class="muted"></span></span>
+          </label>
+          <p class="muted small span-2" id="cp-social-off">Social listening: no run yet. Run a social listening search first so the plan can answer real audience questions.</p>
         </div>
       </div>
       <div class="step-actions">
@@ -430,7 +442,7 @@
     <div id="cp-result" hidden>
       <section class="card">
         <div class="summary-head">
-          <div><h2 id="cp-title"></h2><p id="cp-sub" class="muted"></p></div>
+          <div><h2 id="cp-title"></h2><p id="cp-sub" class="muted"></p><p id="cp-data-used" class="muted small"></p></div>
           <div class="summary-actions">
             <button id="cp-csv" class="btn btn-ghost" type="button">Download CSV</button>
             <button id="cp-md" class="btn btn-ghost" type="button">Download briefs (.md)</button>

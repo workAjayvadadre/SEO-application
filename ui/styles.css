@@ -698,14 +698,16 @@ a.stat { text-decoration: none; display: grid; }
 .rq-question { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
 .rq-status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); }
 .rq-status.s-approved { background: var(--accent-soft); color: var(--accent); }
-.rq-status.s-posted { background: var(--accent); color: var(--on-accent); }
+.rq-status.s-posted { background: var(--ok); color: var(--on-ok, #ffffff); }
+.rq-status.s-posted::before { content: "✓ "; }
 .rq-status.s-failed { color: var(--danger, #c0392b); }
 .rq-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
 .rq-checks .ok::before { content: "✓ "; color: var(--accent); }
 .rq-checks .bad { color: var(--danger, #c0392b); }
 .rq-checks .bad::before { content: "✕ "; }
 .rq-log ul { margin: 4px 0 0; padding-left: 18px; }
-.rq-card.is-posted { opacity: 0.85; }
+.rq-card.is-posted { border-left: 4px solid var(--ok); }
+@media (prefers-color-scheme: dark) { :root { --on-ok: #0f1115; } }  /* dark text on the light dark-mode green */
 .offscreen { position: fixed; left: -9999px; top: 0; }
 
 /* Open queries: Claude-written answer in the Answers column */
